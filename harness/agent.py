@@ -133,7 +133,8 @@ class Agent:
         if m.get("bot") or m.get("me"):
             return
         recent = list(conv.recent)
-        if m.get("mentions_me") or m.get("to_me") or any(x.get("me") for x in recent[-NEAR_N:]):
+        if (m.get("mentions_me") or m.get("to_me") or any(x.get("me") for x in recent[-NEAR_N:])
+                or self.persona.wants_read(m, recent)):
             self.reading.append({"channel": ch, "message": m, "before": recent[-7:-1], "after": [], "at": self.now()})
         self.batches.setdefault(ch, []).append(m)
         loop = asyncio.get_running_loop()
@@ -216,7 +217,8 @@ class Agent:
         recent = list(self.conv(ch).recent)
         share, humans = self.share(recent[-SHARE_WINDOW:])
         convo = "\n".join(f"{m['author']}: {m['text']}" for m in recent[-6:])
-        scene = {"addressed": addressed, "target": target, "presence": pres, "share": share, "humans": humans}
+        scene = {"addressed": addressed, "target": target, "presence": pres, "share": share, "humans": humans,
+                 "convo": convo}
         qs = dict(self.persona.jev_questions(scene))
         cfg = self.config.get("jev") or {}
         if not addressed and not pres.away:
@@ -310,10 +312,12 @@ class Agent:
             return
         if isinstance(out, str):
             await self.sender.react(ch, it.target["id"], out)
+            self.persona.on_delivered(it, out)
             return
         moved = it.target and self.conv(ch).last_id() != it.target["id"]
         reply_to = it.target["id"] if it.target and (moved or it.addressed) else None
         await self.sender.send(ch, out, reply_to=reply_to, typing=[self.persona.typing_sec(x, pres.device) for x in out])
+        self.persona.on_delivered(it, out)
         qs = self.persona.sent_questions(out)
         if qs:
             convo = "\n".join(f"{m['author']}: {m['text']}" for m in list(self.conv(ch).recent)[-6:])
@@ -352,7 +356,7 @@ class Agent:
         if it.note:
             s["補足"] = it.note
         log.info("節の字数: %s／記憶 %s", {k: len(v) for k, v in s.items()}, stats)
-        return await writer.write(self.llm, self.jev, self.vault, self.about, s, it.kind, self.persona.guards(),
+        return await writer.write(self.llm, self.jev, self.vault, self.about, s, it.kind, self.persona.guards(it.target),
                                   self.config.get("reactions") or (), mine, lines)
 
     async def recheck(self, it, start_lines, new, draft, allow_rewrite=True):
@@ -469,7 +473,8 @@ class Agent:
         m = it["message"]
         lines = "\n".join(f"{x['author']}: {x['text']}" for x in it["before"])
         after = "\n".join(f"{x['author']}: {x['text']}" for x in it["after"])
-        state = f"【前の会話】\n{lines}\n【読む発言】{m['author']}: {m['text']}\n【後の会話】\n{after}"
+        state = (self.persona.read_context(it) +
+                 f"【前の会話】\n{lines}\n【読む発言】{m['author']}: {m['text']}\n【後の会話】\n{after}")
         qs = dict(self.persona.read_questions(it))
         if self.config.get("kinds"):
             qs["record"] = record_question(self.config["kinds"], self.about)

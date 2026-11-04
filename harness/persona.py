@@ -63,8 +63,8 @@ class Persona:
         """会話用 LLM に渡す節 {節名: 文}。節名は AGENTS.md に書いてあるものだけを使う。"""
         return {}
 
-    def guards(self):
-        """送る前に弾く正規表現のリスト。1通でも当たった案は使わない。"""
+    def guards(self, target=None):
+        """送る前に弾く正規表現のリスト。1通でも当たった案は使わない。target は返す相手の発言（無ければ None）。"""
         return []
 
     def typing_sec(self, text, device):
@@ -73,6 +73,14 @@ class Persona:
         return max(1.0, min(6.0, len(text) * 0.15))
 
     # --- 読んだ後・送った後 -----------------------------------------------------
+    def wants_read(self, m, recent):
+        """自分宛てでも、自分が混ざっている会話でもない発言を、後で読みたいか（好きな相手への言動など）。"""
+        return False
+
+    def read_context(self, item):
+        """後で読む時の state の頭に足す行（【発言者】【相手】など）。"""
+        return ""
+
     def read_questions(self, item):
         """後で読む時の Jev の1回に足す問い（好感度、怒りと謝り など）。"""
         return {}
@@ -86,3 +94,6 @@ class Persona:
 
     def on_sent(self, texts, answers):
         """送った返事を Jev が読んだ結果を受け取る。"""
+
+    def on_delivered(self, intent, out):
+        """実際に送った（文章でもリアクションでも）。影のチャンネルでは呼ばれない。"""

@@ -8,7 +8,7 @@ from harness.persona import Persona
 
 
 class Basic(Persona):
-    def guards(self):
+    def guards(self, target=None):
         return [re.compile(p) for p in self.agent.config.get("guards") or []]
 
 

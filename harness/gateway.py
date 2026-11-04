@@ -45,7 +45,10 @@ class Gateway(discord.Client):
 
     def entry(self, m):
         ref = m.reference.resolved if m.reference else None
+        # 誰に向けた発言か（返信先、無ければ最初のメンション先）。好感度と呼び名を読む時に使う
+        to = ref.author if isinstance(ref, discord.Message) else next((u for u in m.mentions if u != m.author), None)
         return {"id": str(m.id), "at": m.created_at.astimezone().replace(tzinfo=None).isoformat(timespec="seconds"),
+                "target_author": to.display_name if to else None, "target_id": str(to.id) if to else None,
                 "channel": str(m.channel.id), "author": m.author.display_name, "author_id": str(m.author.id),
                 "bot": m.author.bot, "me": m.author == self.user, "text": self.describe(m),
                 "to_me": bool(isinstance(ref, discord.Message) and ref.author == self.user) or self.user in m.mentions,
