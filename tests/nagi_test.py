@@ -77,6 +77,15 @@ class NagiTest(unittest.TestCase):
         self.assertIn("財布", s)
         self.assertNotIn("energy", s)
 
+    def test_names_regex(self):
+        a, _ = make(datetime(2026, 11, 10, 15, 0))
+        p = f"{a.vault.root}/Agents/config.yaml"
+        with open(p, "a", encoding="utf-8") as f:
+            f.write('names_regex: "あかり|(?<![つツ])なぎ(?![さ])"\n')
+        r = a.persona.names()
+        self.assertTrue(r.search("なぎ起きてる？"))
+        self.assertFalse(r.search("つなぎ着てる"))
+
     def test_guards(self):
         a, _ = make(datetime(2026, 11, 10, 15, 0))
         g = a.persona.guards()
