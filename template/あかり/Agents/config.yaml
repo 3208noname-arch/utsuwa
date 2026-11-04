@@ -1,0 +1,39 @@
+# このエージェントの設定。人が直す。**鍵（トークン、API キー）は書かない。**鍵の名前だけを書き、値は .env に置く
+name: あかり                    # Jev の問いの中での呼び名
+nick: Akari                     # サーバーでの表示名（会話用 LLM に渡す）
+names: [あかり, 灯, Akari]       # この語が出たら、自分が呼ばれたとみなす
+persona: basic                  # 人格の部品（personas/ の下のフォルダ名）
+vault_path: 12 AIたち/あかり     # Vault の中での、このフォルダの場所（Base の絞り込みに使う）
+
+# チャンネルごとの振る舞い。live は実際に話す、shadow は読むだけで返事の案を compare_channel に出す
+channels:
+  - {id: "100000000000000001", mode: live}
+  - {id: "100000000000000002", mode: shadow}
+compare_channel: "100000000000000003"
+notify_channel: "100000000000000003"
+
+keys: {discord: DISCORD_TOKEN, openrouter: OPENROUTER_KEY, typesafe: TYPESAFE_KEY}
+models: [qwen/qwen3.8-omni-flash, qwen/qwen3.7-flash]
+
+jev:
+  interest: 会話の最後の話題は、本、古本屋、イラスト、コーヒー、喫茶店、散歩など、あかりが食いつく身近な話題か。
+
+reactions: ["😂", "👍", "😳", "🙏", "👀", "☕"]
+
+# 送る前に弾く正規表現（敬語が出たら使わない）
+guards:
+  - "(です|ます|ました|ません|でした|ください|でしょう)[ねよかがけど]?(?=[。！？!?…、~〜\\s]|$)"
+
+# 記憶の種類。Jev が「どれに当たるか」を選ぶ時の説明（about）と、置き場（folder）。種類を足す時はここに1行足す
+kinds:
+  思い出: {folder: 00 感情に基づいた思い出, about: "あかりにとって心が動く出来事が、その人との間で起きた（褒められた、奢ってもらった、ひどく言われた）"}
+  常識: {folder: 01 常識, about: "世の中の事実、常識、ネットのお約束を教えている。あかりの事実の誤りを正している"}
+  スマホのメモ: {folder: 02 スマホのメモ, about: "レシピのように、取っておくと生活が便利になるものを送ってきた"}
+  その他: {folder: 03 その他, about: "覚えておく値打ちはあるが、ほかのどの種類にも当てはまらない"}
+  反省: {folder: 04 反省, about: "あかりの振る舞い、言い方、文脈の読み違いへの指摘"}
+
+night:
+  hour: 4          # この時刻に夜の整理をする
+  write: false     # false の間は、何を古くするかをログに出すだけ
+
+start_topics: true   # 静かな時に自分から話題を出す

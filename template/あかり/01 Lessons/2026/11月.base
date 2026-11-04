@@ -1,0 +1,14 @@
+filters:
+  and:
+    - file.inFolder("12 AIたち/あかり/01 Lessons")
+    - file.ext == "md"
+    - "!date.isEmpty()"
+    - date.year == 2026
+    - date.month == 11
+views:
+  - type: table
+    name: 11月に教わったこと
+    order: [file.name, 種類, 教わった人, 出どころ, date, status]
+    sort:
+      - property: date
+        direction: ASC

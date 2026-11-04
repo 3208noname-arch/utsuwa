@@ -1,0 +1,13 @@
+# 1人のエージェントにつき1つ動かす。%i はエージェントのフォルダ名（例: systemctl enable --now utsuwa@ナギ）
+[Unit]
+Description=utsuwa agent %i
+After=network-online.target remote-fs.target
+
+[Service]
+WorkingDirectory=/opt/utsuwa
+ExecStart=/opt/utsuwa/venv/bin/python -m harness "/mnt/omv_obsidian/12 AIたち/%i" --env /opt/utsuwa/.env
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

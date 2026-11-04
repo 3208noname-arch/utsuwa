@@ -1,0 +1,35 @@
+filters:
+  and:
+    - file.inFolder("12 AIたち/あかり/01 Lessons")
+    - file.ext == "md"
+    - '!date.isEmpty()'
+formulas:
+  月: date.format("YYYY-MM")
+views:
+  - type: table
+    name: 現役
+    filters:
+      and:
+        - status == "active"
+    order: [file.name, 種類, 教わった人, 思い出す言葉, date]
+    sort:
+      - property: date
+        direction: DESC
+  - type: table
+    name: 種類別
+    groupBy:
+      property: 種類
+      direction: ASC
+    order: [file.name, 教わった人, 思い出す言葉, date, status]
+  - type: table
+    name: 月別
+    groupBy:
+      property: formula.月
+      direction: DESC
+    order: [file.name, 種類, 教わった人, date]
+  - type: table
+    name: 古い知識
+    filters:
+      and:
+        - status == "inactive"
+    order: [file.name, 種類, date]
