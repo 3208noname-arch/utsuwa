@@ -1,6 +1,6 @@
 filters:
   and:
-    - file.inFolder("12 AIたち/あかり/01 Lessons")
+    - file.path.contains("あかり/01 Lessons/")
     - file.ext == "md"
     - '!date.isEmpty()'
 formulas:
