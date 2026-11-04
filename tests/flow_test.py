@@ -9,7 +9,9 @@ from datetime import datetime, timedelta
 from harness import writer
 from harness.agent import Agent
 from harness.outbox import Intent, Outbox
-from harness.vault import Vault
+import tempfile
+
+from harness.vault import DATA_WRITABLE, MD_WRITABLE, NotWritable, Vault
 from tests.fakes import FakeJev, FakeLLM, FakeSender, copy_template, msg
 
 LIVE, SHADOW, COMPARE = "100000000000000001", "100000000000000002", "100000000000000003"
@@ -19,11 +21,12 @@ def cands(*texts):
     return json.dumps({"candidates": [{"messages": [t]} for t in texts]}, ensure_ascii=False)
 
 
-def make(jev_rule=None, llm=None, wait=0.0):
+def make(jev_rule=None, llm=None, wait=0.0, data=None):
     clock = {"t": datetime(2026, 11, 9, 20, 0)}    # 月曜の夜（予定なし）
     sender = FakeSender()
-    a = Agent(Vault(copy_template()), FakeJev(jev_rule), llm or FakeLLM([]), sender,
-              clock=lambda: clock["t"], notice=lambda p, addr: wait)
+    vault = Vault(copy_template(), MD_WRITABLE) if data else Vault(copy_template())
+    a = Agent(vault, FakeJev(jev_rule), llm or FakeLLM([]), sender,
+              clock=lambda: clock["t"], notice=lambda p, addr: wait, data=data)
     a.quiet_sec = 0.05
     # 宛先の無い発言には混ざらない（混ざる確率の抽選でテストが揺れないように）
     a.persona.choose = lambda scene: None if scene["addressed"] else "none"
@@ -203,6 +206,25 @@ class FlowTest(unittest.TestCase):
         a = asyncio.run(go())
         self.assertTrue(a.vault.exists("03 Logs/chat/2026-11-09.jsonl"))
         self.assertEqual(a.vault.json("02 State/harness.json")["counts"]["total"], 1)
+
+    def test_state_and_logs_can_live_outside_the_vault(self):
+        """--data：Vault には md だけ。状態と原本は CT の別の場所に書き、Vault には書けない。"""
+        data = Vault(tempfile.mkdtemp(), DATA_WRITABLE)
+
+        async def go():
+            a, s, clock = make(pov_ok, FakeLLM([cands("どした？")]), data=data)
+            await say(a, clock, "1", "あかり起きてる？")
+            await asyncio.sleep(0.3)
+            a.flush(clock["t"], force=True)
+            return a
+        a = asyncio.run(go())
+        self.assertTrue(data.exists("03 Logs/chat/2026-11-09.jsonl"))
+        self.assertEqual(data.json("02 State/harness.json")["counts"]["total"], 1)
+        self.assertFalse(a.vault.exists("03 Logs/chat/2026-11-09.jsonl"))   # 見本に入っている分の他は増えない
+        with self.assertRaises(NotWritable):
+            a.vault.write_text("02 State/x.json", "{}")
+        with self.assertRaises(NotWritable):
+            data.write_text("01 Lessons/x.md", "x")
 
 
 if __name__ == "__main__":

@@ -5,7 +5,8 @@ After=network-online.target remote-fs.target
 
 [Service]
 WorkingDirectory=/opt/utsuwa
-ExecStart=/opt/utsuwa/venv/bin/python -m harness "/mnt/omv_obsidian/12 AIたち/%i" --env /opt/utsuwa/.env
+# md は Vault（同期に乗る）、数値の状態と会話の原本は CT の /var/lib/utsuwa/%i（同期に乗せず、Web UI で見る）
+ExecStart=/opt/utsuwa/venv/bin/python -m harness "/mnt/omv_obsidian/12 AIたち/%i" --data "/var/lib/utsuwa/%i" --env /opt/utsuwa/.env
 Restart=on-failure
 RestartSec=30
 

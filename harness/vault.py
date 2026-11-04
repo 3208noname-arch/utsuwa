@@ -14,7 +14,9 @@ import yaml
 
 log = logging.getLogger("utsuwa")
 
-WRITABLE = ("00 Diary", "01 Lessons", "02 State", "03 Logs")
+MD_WRITABLE = ("00 Diary", "01 Lessons")       # Vault の md（人格の記憶と日記）
+DATA_WRITABLE = ("02 State", "03 Logs")        # 数値の状態と会話の原本。--data で CT の別の場所に置ける
+WRITABLE = MD_WRITABLE + DATA_WRITABLE          # 全部を1つのフォルダに置く時（見本とテスト）
 WATCH_EXT = (".md", ".yaml", ".yml", ".base")
 
 
@@ -59,8 +61,9 @@ def _stamp(path):
 
 
 class Vault:
-    def __init__(self, root):
+    def __init__(self, root, writable=WRITABLE):
         self.root = os.path.abspath(root)
+        self.writable = writable
         self._cache = {}      # rel -> (stamp, 解いた結果)
         self._seen = None     # 書き換えの検知に使う、前回見た時の {rel: stamp}
 
@@ -139,7 +142,7 @@ class Vault:
     # --- 書く ---------------------------------------------------------------
     def _check_writable(self, rel):
         top = rel.replace("\\", "/").split("/")[0]
-        if top not in WRITABLE:
+        if top not in self.writable:
             raise NotWritable(f"ハーネスはここに書けない: {rel}")
         return self.path(rel)
 

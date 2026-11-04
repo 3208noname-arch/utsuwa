@@ -61,12 +61,13 @@ def load_persona(name):
 
 
 class Agent:
-    def __init__(self, vault, jev, llm, sender, persona_cls=None, clock=datetime.now, notice=None):
+    def __init__(self, vault, jev, llm, sender, persona_cls=None, clock=datetime.now, notice=None, data=None):
         self.vault, self.jev, self.llm, self.sender = vault, jev, llm, sender
+        self.data = data or vault      # 状態（02 State/）と原本（03 Logs/）の置き場。無ければ Vault の同じフォルダ
         self.now = clock
         self.notice = notice           # テストで気付くまでの間を差し替える（秒を返す関数）
         self.quiet_sec = QUIET_SEC
-        self.logs = Logs(vault)
+        self.logs = Logs(self.data)
         self._states = {}
         self.h = self.state("harness", {})
         self.convs = {}
@@ -90,7 +91,7 @@ class Agent:
 
     def state(self, name, default=None):
         if name not in self._states:
-            self._states[name] = State(self.vault, name, default)
+            self._states[name] = State(self.data, name, default)
         return self._states[name]
 
     def channel_mode(self, channel):
@@ -506,7 +507,7 @@ class Agent:
         events = self.h.data.get("events", {}).get(day.isoformat(), [])
         learned = [r.body for r in context.lesson_rows(self.vault) if r.date == day.isoformat()]
         mine = []
-        p = self.vault.path(f"03 Logs/chat/{day.isoformat()}.jsonl")
+        p = self.data.path(f"03 Logs/chat/{day.isoformat()}.jsonl")
         if os.path.exists(p):
             with open(p, encoding="utf-8") as f:
                 mine = [json.loads(x)["text"] for x in f if x.strip() and json.loads(x).get("me")]

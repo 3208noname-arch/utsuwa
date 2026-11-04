@@ -1,4 +1,7 @@
-"""起動: python -m harness <エージェントのフォルダ> [--env .env] [--check]
+"""起動: python -m harness <エージェントのフォルダ> [--data <状態と原本の置き場>] [--env .env] [--check]
+
+--data を渡すと、Vault には md（Agents/、00 Diary/、01 Lessons/）だけを置き、数値の状態（02 State/）と
+会話と評価の原本（03 Logs/）はそこに書く。Vault の同期に乗せず、CT の Web UI から見る。渡さなければ同じフォルダに書く。
 
 --check は Discord に繋がずに、フォルダを読めるか（人格、決まり、予定、記憶の表）を確かめて終わる。
 鍵は .env に置き、config.yaml には鍵の名前だけを書く（Vault に鍵を置かない）。
@@ -13,7 +16,7 @@ from harness import __version__
 from harness.agent import Agent
 from harness.api import LLM, Jev
 from harness.context import lesson_rows
-from harness.vault import Vault
+from harness.vault import DATA_WRITABLE, MD_WRITABLE, Vault
 
 
 def load_env(path):
@@ -30,6 +33,7 @@ def load_env(path):
 def check(agent):
     v, t = agent.vault, agent.now()
     print(f"utsuwa {__version__}: {v.root}")
+    print(f"  状態と原本: {agent.data.root}")
     print(f"  人格の部品: {type(agent.persona).__name__}")
     print(f"  SOUL.md {len(v.text('Agents/SOUL.md'))}字 / AGENTS.md {len(v.text('Agents/AGENTS.md'))}字 / "
           f"RECORDER.md {len(v.text('Agents/RECORDER.md'))}字")
@@ -44,13 +48,18 @@ def check(agent):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("folder")
+    ap.add_argument("--data")
     ap.add_argument("--env", default=".env")
     ap.add_argument("--check", action="store_true")
     a = ap.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
     load_env(a.env)
-    vault = Vault(a.folder)
-    probe = Agent(vault, None, None, None)
+    if a.data:
+        os.makedirs(a.data, exist_ok=True)
+        vault, data = Vault(a.folder, MD_WRITABLE), Vault(a.data, DATA_WRITABLE)
+    else:
+        vault = data = Vault(a.folder)
+    probe = Agent(vault, None, None, None, data=data)
     keys = probe.config.get("keys") or {}
     jev = Jev(os.environ.get(keys.get("typesafe", "TYPESAFE_KEY"), ""))
     llm = LLM(os.environ.get(keys.get("openrouter", "OPENROUTER_KEY"), ""), probe.config.get("models") or [])
@@ -59,7 +68,7 @@ def main():
         return
     from harness.gateway import Gateway
     gw = Gateway()
-    agent = Agent(vault, jev, llm, gw)
+    agent = Agent(vault, jev, llm, gw, data=data)
     gw.agent = agent
     try:
         gw.run(os.environ[keys.get("discord", "DISCORD_TOKEN")], log_handler=None)
