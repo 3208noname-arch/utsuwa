@@ -1,11 +1,14 @@
 """ナギの部品を本体に差し込んで動くか（見本のフォルダの設定を persona: nagi に替えて試す）。"""
 import asyncio
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
+
+import yaml
 
 from harness.agent import Agent
 from harness.vault import Vault
-from personas.nagi.engine import decide
+from personas.nagi import rules
+from personas.nagi.engine import anger, decide
 from tests.fakes import FakeJev, FakeLLM, FakeSender, copy_template
 
 
@@ -25,7 +28,35 @@ class NagiTest(unittest.TestCase):
         p = a.persona.presence(a.now())
         self.assertEqual(p.state, "バイト中")
         self.assertTrue(p.busy)
-        self.assertIn(0, decide.BAITO_DAYS)
+        self.assertEqual(decide.items(a.now())[0][2], "古本屋のバイト")
+
+    def test_extra_schedule_reaches_body(self):
+        a, _ = make(datetime(2026, 11, 12, 13, 0))     # 木曜 13時。臨時の「休み: 古本屋のバイト」
+        self.assertEqual(a.persona.presence(a.now()).state, "ふつう")
+        self.assertEqual(decide.schedule(a.now()), "その他")
+
+    def test_rules_override_and_reset(self):
+        a, _ = make(datetime(2026, 11, 10, 15, 0))
+        p = f"{a.vault.root}/Agents/config.yaml"
+        base = open(p, encoding="utf-8").read()
+        with open(p, "a", encoding="utf-8") as f:
+            f.write('rules:\n  anger: {ADD: {attack: 10}, HALF_LIFE: 30}\n  decide: {WAKE: "09:00"}\n  nope: {X: 1}\n')
+        with self.assertLogs("utsuwa", "WARNING") as logs:
+            a.persona.refresh()
+        self.assertEqual(anger.ADD, {"attack": 10, "belittle": 15})
+        self.assertEqual(anger.HALF_LIFE, timedelta(minutes=30))
+        self.assertEqual(decide.WAKE, time(9, 0))
+        self.assertTrue(any("nope" in x for x in logs.output))
+        open(p, "w", encoding="utf-8").write(base + "\n")   # 消せば既定値に戻る
+        a.persona.refresh()
+        self.assertEqual(anger.ADD["attack"], 40)
+        self.assertEqual(decide.WAKE, time(10, 30))
+
+    def test_example_config_matches_defaults(self):
+        """見本の config の rules: が、コードの既定値と食い違っていないか。"""
+        ex = yaml.safe_load(open("personas/nagi/config.example.yaml", encoding="utf-8"))
+        self.assertEqual(ex["rules"], rules.current())
+        self.assertEqual(rules.apply(ex["rules"]), [])
 
     def test_tick_moves_body_and_sent_reply_spends(self):
         a, clock = make(datetime(2026, 11, 10, 15, 0))  # 火曜（予定なし）

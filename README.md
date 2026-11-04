@@ -60,6 +60,8 @@ python -m harness "/path/to/Vault/12 AIたち/あかり" --env .env
 
 - `basic`：体も気分も持たない。今の様子は予定だけで決める
 - `nagi`：体（眠気、空腹、気力、財布）、予定から決まる今の様子、気分（居心地）、話題の好き嫌い、混ざり方を居心地の予想で選ぶ、好感度、怒りと謝り、呼び名。規則は `personas/nagi/engine/`
+  - 予定（講義、バイト、臨時の休み）は `SCHEDULE.md` から読む。見本は `personas/nagi/SCHEDULE.example.md`
+  - 決まりの値（怒りの増え方、好感度の増減、体の進み方など）は `config.yaml` の `rules:` で上書きできる。見本は `personas/nagi/config.example.yaml`、今の既定値は `python -m personas.nagi` で出る
   - 気分、好感度、怒り、呼び名は、本体の「後で読む」の Jev 1回で読む（記録するかと同じ呼び出し）
   - 今やったこと、奢ってもらったこと、口にした好き嫌いは、送った返事を Jev が読んで決める（会話用の LLM には書かせない）
 

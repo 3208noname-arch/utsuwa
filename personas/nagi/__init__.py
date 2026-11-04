@@ -10,16 +10,21 @@
 
 状態は `02 State/` に部品ごとに置く（body、mood、likes、anger、names、topics、policy、nagi）。
 
-予定は `Agents/SCHEDULE.md` から読み、minato の時間割（decide.TIMETABLE）に流し込む。名前に「バイト」を含む予定をバイトとして扱う。
-臨時の予定は、本体の【この先1週間の予定】には出るが、体の規則（講義中・バイト中）にはまだ効かない。
+予定は `Agents/SCHEDULE.md` から読む（decide.PLAN）。名前に「バイト」を含む予定をバイトとして扱う。
+決まりの値（怒りの増え方、好感度の増減など）は `config.yaml` の `rules:` で上書きできる（rules.py）。
+臨時の予定（休み、代わりのシフト）も、体の規則（講義中・バイト中）に効く。
 """
+import logging
 import random
 import re
-from datetime import datetime, time, timedelta
+from datetime import datetime, timedelta
 
 from harness.api import choice, noul
 from harness.persona import Persona, Presence
 from personas.nagi.engine import affinity, anger, body, decide, mood, names, policy, topics
+from personas.nagi.rules import apply as apply_rules
+
+log = logging.getLogger("utsuwa")
 
 ANNOUNCE = {"寝た": "眠気が限界なので、今から寝る。会話から抜ける一言だけ",
             "落ちる": "人と話すのがしんどくなったので、少し会話から抜ける。重くならない一言だけ",
@@ -49,10 +54,6 @@ APOLOGY_QS = {"apology": "発言者は【相手】に、自分の言ったこと
                        "本気で反省して謝っているなら当てはまらない。"}
 
 
-def _hm(minutes):
-    return time(23, 59) if minutes >= 24 * 60 else time(minutes // 60, minutes % 60)
-
-
 TAIL = re.compile(r"(さぁ|さあ|ってば|って|さ|は|が|も|に|の|と|へ|や|よ|ね|な)+$")
 RUN = re.compile(r"[ァ-ヴー]{2,}|[一-龥々]{1,4}|[A-Za-z][A-Za-z0-9_]{1,}")
 
@@ -72,6 +73,7 @@ def name_candidates(text):
 class Nagi(Persona):
     def __init__(self, agent):
         super().__init__(agent)
+        self._rules = None
         t = agent.now()
         self.body_state = self.state("body", body.new(t))
         self.mood_state = self.state("mood", mood.new(t))
@@ -96,24 +98,17 @@ class Nagi(Persona):
         return f"{c.get('name', 'ナギ')}（{c.get('nick', 'N4Gi')}）"
 
     # --- 予定と体 --------------------------------------------------------------------
-    def apply_schedule(self):
-        """SCHEDULE.md の毎週の予定を、minato の時間割の形に流し込む（読み直された時もここで効く）。"""
-        s = self.agent.schedule()
-        table, baito_days, baito = {}, [], None
-        for wd, items in s.weekly.items():
-            for x in items:
-                if "バイト" in x.name:
-                    baito_days.append(wd)
-                    baito = (_hm(x.start), _hm(x.end))
-                else:
-                    table.setdefault(wd, []).append((_hm(x.start), _hm(x.end), x.name))
-        if s.weekly:
-            decide.TIMETABLE, decide.BAITO_DAYS = table, tuple(sorted(set(baito_days)))
-            if baito:
-                decide.BAITO = baito
+    def refresh(self):
+        """SCHEDULE.md の予定と config.yaml の rules を、規則に流し込む（読み直された時もここで効く）。"""
+        decide.PLAN = self.agent.schedule()
+        rules = self.agent.config.get("rules") or {}
+        if rules != self._rules:
+            self._rules = rules
+            for w in apply_rules(rules):
+                log.warning("config.yaml の rules: %s", w)
 
     def tick(self, t):
-        self.apply_schedule()
+        self.refresh()
         sched = decide.schedule(t)
         on, at = decide.alarm(t)
         ev = body.tick(self.b, t, sched, on, at)
@@ -134,7 +129,7 @@ class Nagi(Persona):
         return ANNOUNCE.get(event)
 
     def presence(self, t):
-        self.apply_schedule()
+        self.refresh()
         act = decide.activity(t, self.b)
         st = act["state"]
         return Presence(state=st, label=act["label"], device=act["device"],

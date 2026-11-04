@@ -1,0 +1,172 @@
+# ナギの config.yaml の見本。`12 AIたち/ナギ/Agents/config.yaml` に置いて使う。人が直す
+# **鍵（トークン、API キー）は書かない。**鍵の名前だけを書き、値は .env に置く
+name: ナギ                       # Jev の問いの中での呼び名
+nick: N4Gi                       # サーバーでの表示名（会話用 LLM に渡す）
+names: [ナギ, 凪, なぎ, N4Gi]     # この語が出たら、自分が呼ばれたとみなす
+persona: nagi                    # 人格の部品（personas/ の下のフォルダ名）
+vault_path: 12 AIたち/ナギ
+
+# チャンネルの id は本番の値に替える。live は実際に話す、shadow は読むだけで返事の案を compare_channel に出す
+channels:
+  - {id: "000000000000000001", mode: shadow}   # #雑談
+  - {id: "000000000000000002", mode: live}     # テスト用チャンネル
+compare_channel: "000000000000000003"
+notify_channel: "000000000000000003"
+
+keys: {discord: DISCORD_TOKEN, openrouter: OPENROUTER_KEY, typesafe: TYPESAFE_KEY}
+models: [qwen/qwen3.8-omni-flash, qwen/qwen3.7-flash]
+
+# minato の persona.py（本番だけにある）から写す
+jev:
+  interest: 会話の最後の話題は、ナギが食いつく身近な話題か。
+reactions: ["😂", "👍", "😳", "🙏", "👀"]
+
+kinds:
+  思い出: {folder: 00 感情に基づいた思い出, about: "ナギにとって心が動く出来事が、その人との間で起きた（褒められた、奢ってもらった、ひどく言われた）"}
+  常識: {folder: 01 常識, about: "世の中の事実、常識、ネットのお約束を教えている。ナギの事実の誤りを正している"}
+  スマホのメモ: {folder: 02 スマホのメモ, about: "レシピのように、取っておくと生活が便利になるものを送ってきた"}
+  その他: {folder: 03 その他, about: "覚えておく値打ちはあるが、ほかのどの種類にも当てはまらない"}
+  反省: {folder: 04 反省, about: "ナギの振る舞い、言い方、文脈の読み違いへの指摘"}
+
+night:
+  hour: 4
+  write: false
+
+start_topics: true
+
+# 決まりの値。書いた分だけ既定値（personas/nagi/engine/ の定数）を上書きし、消せば既定値に戻る。保存すれば次の1分で効く
+# 時間は分、時刻は "08:00"、組をキーにした表は "attack/me"（けなす/ナギに）。書き間違いはログに出して既定値のまま
+# 下は今の既定値の全部（python -m personas.nagi で出し直せる）。直したい行だけ残してもよい
+rules:
+  affinity:
+    INITIAL: 20.0
+    DAILY_CAP: 15.0
+    DECAY: 0.9  # 1日ごとに 0 との差に掛ける
+    "TRUE": 0.7  # Jev をこれ以上で真と読む
+    TEASE_MAX: 0.5  # いじり・冗談がこれ以上なら、けなしとも本心の褒めとも読まない
+    AFTER_N: 6  # 判定する発言の後、これだけ続いたら読む
+    AFTER_WAIT: 10  # 分。続かなくても、これだけ経ったら読む
+    CHAT_PLUS: 1.0
+    CHAT_PER_DAY: 3
+    KEEP: 20160  # 分
+    KEEP_N: 10
+    BANDS: [[50, 仲いい], [15, 好き], [-14, ふつう], [-49, 気まずい], [-100, 苦手]]
+    DELTA: {attack/me: -8, support/me: 6, joke/me: 2, belittle/me: -1, treat/me: 3, belittle/close: -1, attack/close: -8, support/close: 4, attack/friend: -4, support/friend: 2}
+  anger:
+    ADD: {attack: 40, belittle: 15}
+    HALF_LIFE: 120  # 分
+    CLOSE_HALF_LIFE: 60  # 分
+    CLOSE_FROM: 50  # 好感度がこれ以上なら仲がいい（早く冷める）
+    APOLOGY_TRUE: 0.7
+    CUT_SINCERE: 0.8  # 謝られた時に減る割合（本気／軽い）
+    CUT_LIGHT: 0.2  # 謝られた時に減る割合（本気／軽い）
+    LIGHT_FROM: 0.5  # 軽さがこれ以下なら本気の謝罪とみなす
+    FORGET: 5  # これを割ったら消す
+    BANDS: [[50, かなり怒っている], [20, むかついている], [5, 少し根に持っている]]
+    CURT_OK_FROM: 20  # これ以上怒っている相手には、短い突き放しの一言も許す
+    POLICY_PER: 0.04  # 怒り25ごとに、その相手の発言へ混ざるロジットを−1
+  body:
+    SLEEPY_AWAKE: 4.5  # 10時ごろ起きて、夜中2時ごろに80に届く
+    SLEEPY_BAITO: 5.0  # 体を使うと速く溜まる（バイトの日は1時半ごろ寝る）
+    SLEEPY_ASLEEP: -9.0  # 80で寝ると、8時間弱で抜ける
+    HUNGER_AWAKE: 8.0
+    HUNGER_NIGHT: 12.0  # 深夜に眠いと夜食が欲しくなる
+    HUNGER_ASLEEP: 3.0
+    ENERGY_IDLE: 8.0  # 一人でいると戻る（4だと夕方に尽きて抜けてばかりだった）
+    ENERGY_ASLEEP: 10.0
+    ENERGY_LECTURE: -10.0
+    ENERGY_BAITO: -6.0
+    TALK_BASE: 1.0  # 1回送るごとの気力（2＋文字数÷30だと、盛り上がった夕方に尽きた）
+    TALK_PER_CHARS: 40  # 1回送るごとの気力（2＋文字数÷30だと、盛り上がった夕方に尽きた）
+    SLEEP_AT: 80  # 夜（1〜5時）にこれを超えたら寝る
+    SLEEP_AT_EARLY: 92  # 23〜1時はラジオやスマホで粘るので、ここまで寝ない（夜型）
+    CRASH_AT: 100  # どこでも寝落ちる（講義・バイト中は除く）
+    WAKE_BY_SELF: 10  # 目覚ましの無い日は、ここまで抜けたら起きる
+    WAKE_EARLIEST: 9.5  # ただし目覚ましが無ければ9時半までは寝ている（寝坊気質）
+    WAKE_LATEST: 12  # それでも12時には起きる
+    HANGRY: 70  # 空腹がこれ以上だと、気力が戻りにくく、とげが出やすい
+    SNACK_AT: 70  # これ以上なら（金と気力があれば）コンビニに行く
+    LUNCH_FROM: 40
+    LOW_ENERGY: 8  # これを割ったら「ちょっと落ちる」
+    LAZY_ENERGY: 15  # これを割ると、コンビニに行くのも面倒
+    DROP_GAP: 180  # 分。落ちたら、次に落ちるまでこれだけ空ける（低い間は口数を減らすだけ）
+    POST_MEAL_SLEEPY: 10  # 食後の眠気（1時間だけ。溜まる眠気には足さない）
+    POST_MEAL: 60  # 分
+    FUN_HOLD: 40  # 分。楽しい話題が続くと、その間は眠気を感じにくい
+    LUNCH_YEN: 500
+    SNACK_YEN: 400
+    CHEAP_YEN: 100  # 家のカップ麺。予算を超えそうな日はこれで済ませる
+    BROKE: 2000  # これを割ると「金欠」（体の感じ・気分に出る）
+    PAYDAY: 25  # 給料日
+    PAY: 110000  # 給料日
+    SENDDAY: 15  # 仕送り
+    SEND: 30000  # 仕送り
+    BILLDAY: 27  # 家賃・光熱費・スマホ代
+    BILLS: 70000  # 家賃・光熱費・スマホ代
+    TREATS_PER_DAY: 2  # 奢ってもらえるのは1日これまで（ずるにならないように）
+    DID_MAX_YEN: 3000  # 会話の中で言った出費は、1回これまで
+  decide:
+    USER_DAILY_MAX: 30  # 1人あたり、1日にナギが返す回数の上限
+    TOTAL_DAILY_MAX: 150  # 全体の上限。超えたら黙る
+    INTEREST_TRUE: 0.7  # Jev をこれ以上で真と読む。未満と失敗（None）は棄権
+    SHARE_SLACK: 1.5  # 「参加人数分の1」の何倍まで喋ってよいか（1倍だと5人いる時に放置が長すぎた）
+    PICKUP_AFTER: 3  # 分。誰も反応しないままこれだけ経った発言は拾いに行く
+    PICKUP_UNTIL: 30  # 分。これより古い発言は、もう拾わない
+    PICKUP_RATE: 0.6  # 拾う確率（1つの発言につき1回だけ抽選）
+    START_QUIET: 90  # 分。チャンネルがこれだけ静かなら、自分から話題を出しうる
+    START_ALIVE: 1440  # 分。人間がこの間に一度も話していなければ出さない（空の部屋に話さない）
+    START_RATE: 0.022222222222222223  # 条件を満たした1分ごとの確率（平均45分後）
+    STARTS_PER_DAY: 2
+    START_ENERGY: 40
+    PENDING_TTL: 3  # 分。書き始めてからこれ以上かかったら捨てる
+    DEFER_TTL: 720  # 分。後で返す呼びかけの賞味期限
+    WORK_WORDS: [バイト]  # 名前にこれを含む予定は体を使う（バイト中）。ほかの予定は講義中として扱う
+    EARLY_BEFORE: "10:00"  # 最初の予定がこれより前なら、目覚ましをかけて早く起きる（1限）
+    SLEEP_AT: 3  # 3時に寝る
+    WAKE_1GEN: "08:00"  # 1限がある日
+    WAKE: "10:30"  # それ以外
+    GROGGY: 90  # 分。起きてからしばらくは眠い
+    DAY_PARTS: [[4, 深夜], [7, 早朝], [10, 朝], [12, 昼前], [15, 昼], [18, 夕方], [23, 夜], [24, 深夜]]
+    LATE_EXCUSE_MIN: 10  # これより短い遅れは、人間でもいちいち断らない
+  mood:
+    HALF_LIFE: 60  # 分
+    KEEP: 360  # 分
+    KEEP_N: 8
+    SLEEPY_FROM: 65
+    HUNGER_FROM: 60
+    ENERGY_UNDER: 40
+    BODY_GAIN: 0.6
+    BROKE_PENALTY: 5
+    PEOPLE: {attack/me: -15, support/me: 8, joke/me: 3, belittle/me: -6, treat/me: 5, belittle/close: -4, belittle/friend: -2, attack/close: -8, support/close: 3, attack/friend: -4, support/friend: 2}
+    CHAT_PER_LIKE: 0.05  # 話しかけられた時: 好感度20で+1、60で+3、−40で−2
+    TOPIC_GAIN: 10  # 話題: 快(−1〜+1) × 当てはまる確率 × これ
+    TOPIC_TRUE: 0.7  # これ未満の当てはまりは話題と読まない
+    BANDS: [[40, 機嫌がいい], [15, ちょっと機嫌いい], [-14, ふつう], [-39, ちょっと機嫌が悪い], [-100, かなり機嫌が悪い]]
+    HIST_EVERY_MIN: 10
+    HIST_KEEP: 2880  # 分
+  names:
+    ADOPT_TIMES: 3
+    ADOPT_CALLERS: 2
+    MAX_LEN: 12
+  policy:
+    BASE: {none: 0.0, reaction: -1.6, short: -2.0, normal: -4.0}
+    HEAT: {none: 0.0, reaction: 1.4, short: 2.0, normal: 4.2}
+    SIZE: {none: 0.0, reaction: 0.3, short: 0.6, normal: 1.0}  # 口を開く量（快・気分の効き方）
+    HEAT_FROM: 0.4  # 覚醒がこの間で、熱が 0 → 1
+    HEAT_FULL: 0.8  # 覚醒がこの間で、熱が 0 → 1
+    VALENCE_W: 1.5
+    MOOD_W: 0.06666666666666667  # 気分15で、普通に返すロジットが+1
+    Q_W: 0.3  # 予想1（気分+1）あたりのロジット
+    LR: 0.1
+    WINDOW_MIN: 10  # 混ざった後、反応を待つ時間
+  topics:
+    RECENT_N: 10
+    PULL: 0.3  # 既にある覚えた話題を、言った向きへ寄せる割合
+    NEW_AROUSAL: 0.5
+    SHOW_FROM: 0.2  # 快がこれ以上離れている話題だけ、LLMに「好き・嫌い」として渡す
+    EPISODE_MIN: 10
+    JOINED_AROUSAL: 0.03
+    IGNORED_AROUSAL: -0.01
+    FELT_FROM: 2.0  # 人の反応による気分の動きが、これ以上なら快を動かす
+    FELT_VALENCE: 0.03
+    ANCHOR_RANGE: 0.2

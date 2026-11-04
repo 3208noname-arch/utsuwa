@@ -1,7 +1,13 @@
 # -*- coding: utf-8 -*-
 from datetime import datetime, timedelta
 
+from pathlib import Path
+
+from harness.schedule import Schedule
 from personas.nagi.engine import decide as D
+
+# 予定は SCHEDULE.md から読む。テストは minato の時間割を写した見本で動かす
+D.PLAN = Schedule.parse((Path(__file__).parent.parent / "SCHEDULE.example.md").read_text(encoding="utf-8"))
 
 MON = datetime(2026, 10, 5)   # 月曜（1限あり）
 TUE = datetime(2026, 10, 6)   # 火曜（1限なし・バイト）
@@ -156,12 +162,14 @@ eq(D.now_text(datetime(2026, 11, 1, 12, 58)), "11月1日（日）の昼 12:58", 
 eq(D.now_text(datetime(2026, 11, 3, 1, 20)), "11月3日（火）の深夜 01:20（月曜の夜の続き）", "4時までは前日の夜の続き")
 eq(D.week_text(datetime(2026, 11, 1, 12, 0)).split("／")[:2],
    ["日: 授業もバイトも無い", "月: 09:00〜10:40 語学（再履修）、13:00〜14:40 講義"], "今日から7日分")
+eq(D.items(datetime(2026, 11, 3)), [(datetime(2026, 11, 3, 10, 50), datetime(2026, 11, 3, 12, 30), "講義"),
+   (datetime(2026, 11, 3, 18, 0), datetime(2026, 11, 4), "居酒屋のバイト")], "24:00 は翌日の0時")
 
 # 日付と予定（LLMに渡す）
 eq(D.day_text(datetime(2026, 10, 10, 11, 35)),
-   "10月10日（土）。今日の予定: 18:00〜24:00 バイト／明日（日）: 授業もバイトも無い", "土曜は授業なし")
+   "10月10日（土）。今日の予定: 18:00〜24:00 居酒屋のバイト／明日（日）: 授業もバイトも無い", "土曜は授業なし")
 eq(D.day_text(datetime(2026, 10, 11, 1, 22)),
-   "10月10日（土）の深夜。今日の予定: 18:00〜24:00 バイト／明日（日）: 授業もバイトも無い", "4時までは前日の夜")
+   "10月10日（土）の深夜。今日の予定: 18:00〜24:00 居酒屋のバイト／明日（日）: 授業もバイトも無い", "4時までは前日の夜")
 eq(D.day_text(MON.replace(hour=14)).split("／")[0],
    "10月5日（月）。今日の予定: 09:00〜10:40 語学（再履修）、13:00〜14:40 講義", "月曜は1限あり")
 

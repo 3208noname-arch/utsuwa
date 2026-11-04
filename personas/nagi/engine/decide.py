@@ -21,16 +21,10 @@ PENDING_TTL = timedelta(minutes=3)   # 書き始めてからこれ以上かか�
 DEFER_TTL = timedelta(hours=12)      # 後で返す呼びかけの賞味期限
 
 # --- 1週間の予定（会話と無関係に先に決まる） ----------------------------------
-# 私大文系2年。月水の1限は再履修の語学。曜日は 月=0
-TIMETABLE = {
-    0: [(time(9, 0), time(10, 40), "語学（再履修）"), (time(13, 0), time(14, 40), "講義")],
-    1: [(time(10, 50), time(12, 30), "講義")],
-    2: [(time(9, 0), time(10, 40), "語学（再履修）"), (time(14, 50), time(16, 30), "ゼミ")],
-    3: [(time(13, 0), time(14, 40), "講義")],
-    4: [(time(10, 50), time(12, 30), "講義")],
-}
-BAITO_DAYS = (1, 3, 4, 5)            # 火木金土
-BAITO = (time(18, 0), time(23, 59))  # ラスト24時まで
+# 予定そのものは `Agents/SCHEDULE.md` に書く（毎週と臨時）。ここには持たない
+PLAN = None                          # 本体の Schedule。人格の部品が読み直すたびに差し替える。None なら予定なし
+WORK_WORDS = ("バイト",)              # 名前にこれを含む予定は体を使う（バイト中）。ほかの予定は講義中として扱う
+EARLY_BEFORE = time(10, 0)           # 最初の予定がこれより前なら、目覚ましをかけて早く起きる（1限）
 SLEEP_AT = 3                         # 3時に寝る
 WAKE_1GEN = time(8, 0)               # 1限がある日
 WAKE = time(10, 30)                  # それ以外
@@ -41,26 +35,37 @@ def _at(t, hm):
     return datetime.combine(t.date(), hm)
 
 
+def items(d):
+    """その日の予定 [(始まり, 終わり, 名前)]（datetime。24:00 は翌日の0時）。終日の予定は時刻を持たないので除く。"""
+    if PLAN is None:
+        return []
+    d = d.date() if isinstance(d, datetime) else d
+    base = datetime.combine(d, time())
+    return [(base + timedelta(minutes=x.start), base + timedelta(minutes=x.end), x.name)
+            for x in PLAN.items_on(d) if not x.all_day]
+
+
+def kind(name):
+    return "バイト中" if any(w in name for w in WORK_WORDS) else "講義中"
+
+
+def _early(t):
+    first = items(t)
+    return bool(first and first[0][0].time() < EARLY_BEFORE)
+
+
 def wake_time(t):
-    first = TIMETABLE.get(t.weekday(), [])
-    return WAKE_1GEN if first and first[0][0] < time(10, 0) else WAKE
+    return WAKE_1GEN if _early(t) else WAKE
 
 
 def schedule(t):
     """予定だけで決まる状態（講義中／バイト中／その他）。体の変数の進め方に使う。"""
-    for start, end, _ in TIMETABLE.get(t.weekday(), []):
-        if _at(t, start) <= t < _at(t, end):
-            return "講義中"
-    if t.weekday() in BAITO_DAYS and _at(t, BAITO[0]) <= t <= _at(t, BAITO[1]):
-        return "バイト中"
-    return "その他"
+    return next((kind(name) for s, e, name in items(t) if s <= t < e), "その他")
 
 
 def alarm(t):
     """1限がある日だけ目覚ましをかける。(かけているか, 時刻)"""
-    first = TIMETABLE.get(t.weekday(), [])
-    on = bool(first and first[0][0] < time(10, 0))
-    return on, _at(t, WAKE_1GEN)
+    return _early(t), _at(t, WAKE_1GEN)
 
 
 AWAY_LABEL = {"コンビニ": "コンビニに行っている", "一人になりたい": "ちょっと落ちている（一人になりたい）"}
@@ -88,13 +93,12 @@ def activity(t, body=None):
         if SLEEP_AT <= t.hour and t < wake:
             return {"state": "寝ている", "label": "寝ている", "device": "スマホ", "until": wake}
         groggy = wake <= t < wake + GROGGY
-    for start, end, name in TIMETABLE.get(t.weekday(), []):
-        if _at(t, start) <= t < _at(t, end):
+    for start, end, name in items(t):
+        if start <= t < end:
+            if kind(name) == "バイト中":
+                return {"state": "バイト中", "label": f"{name}中", "device": "スマホ", "until": end}
             return {"state": "講義中", "label": f"{name}を受けている（スマホでこっそり見ている）",
-                    "device": "スマホ", "until": _at(t, end)}
-    if t.weekday() in BAITO_DAYS and _at(t, BAITO[0]) <= t <= _at(t, BAITO[1]):
-        return {"state": "バイト中", "label": "居酒屋のバイト中", "device": "スマホ",
-                "until": _at(t, BAITO[1]) + timedelta(minutes=1)}
+                    "device": "スマホ", "until": end}
     if groggy:
         return {"state": "起きたて", "label": "さっき起きたところ（眠いが、もう起きている）", "device": "スマホ", "until": None}
     if t.hour >= 23 or t.hour < 6:
@@ -115,11 +119,9 @@ WDAY = "月火水木金土日"
 
 
 def _plan(d):
-    """その日の予定を1行で。"""
-    items = [f"{s:%H:%M}〜{e:%H:%M} {name}" for s, e, name in TIMETABLE.get(d.weekday(), [])]
-    if d.weekday() in BAITO_DAYS:
-        items.append(f"{BAITO[0]:%H:%M}〜24:00 バイト")
-    return "、".join(items) or "授業もバイトも無い"
+    """その日の予定を1行で（終日の予定も含む）。"""
+    d = d.date() if isinstance(d, datetime) else d
+    return (PLAN and PLAN.day_text(d).replace("予定なし", "")) or "授業もバイトも無い"
 
 
 DAY_PARTS = [(4, "深夜"), (7, "早朝"), (10, "朝"), (12, "昼前"), (15, "昼"), (18, "夕方"), (23, "夜"), (24, "深夜")]
