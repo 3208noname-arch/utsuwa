@@ -377,9 +377,22 @@ function drawPlot() {
   svg.classList.toggle("spin", cur.dim === 3);
   svg.innerHTML = cur.dim === 3 ? draw3(W, H) : draw2(W, H);
 }
-function point(it, x, y, r) {
+function point(it, x, y, r, W, shown) {
+  const left = x > W * .6;      // 右端で名前が切れないように、右側の点は左へ書く
   return `<g class="pt${it.learned ? " learned" : ""}${it.name === open ? " on" : ""}" data-name="${esc(it.name)}" transform="translate(${x.toFixed(1)},${y.toFixed(1)})">
-    <circle r="16" fill="transparent"/><circle class="dot" r="${r.toFixed(1)}"/><text x="${(r + 4).toFixed(1)}" y="4">${esc(it.name)}</text></g>`;
+    <circle r="16" fill="transparent"/><circle class="dot" r="${r.toFixed(1)}"/>${shown ? `<text x="${(left ? -1 : 1) * (r + 4)}" y="4" text-anchor="${left ? "end" : "start"}">${esc(it.name)}</text>` : ""}</g>`;
+}
+// 名前が重なる点は、手前の点と選んだ点を優先して名前を書く（押せば下の一覧が開く）
+function roomy(pts, W) {
+  const boxes = [], out = new Set();
+  const box = p => { const w = p.it.name.length * 12 + 10, x = p.x > W * .6 ? p.x - w : p.x; return [x, p.y - 8, x + w, p.y + 8]; };
+  for (const p of pts.slice().sort((a, b) => (b.it.name === open) - (a.it.name === open))) {
+    const b = box(p);
+    if (boxes.some(o => b[0] < o[2] && o[0] < b[2] && b[1] < o[3] && o[1] < b[3])) continue;
+    boxes.push(b);
+    out.add(p.it.name);
+  }
+  return out;
 }
 const PAD = {l: 14, r: 14, t: 24, b: 24};
 function place(W, H, ax, ay) {
@@ -390,13 +403,15 @@ function draw2(W, H) {
   let s = `<line x1="${sx(mx)}" x2="${sx(mx)}" y1="${PAD.t}" y2="${H - PAD.b}" stroke="var(--line)"/>
     <line x1="${PAD.l}" x2="${W - PAD.r}" y1="${sy(my)}" y2="${sy(my)}" stroke="var(--line)"/>
     <text x="${W - PAD.r}" y="${H - 7}" text-anchor="end">${esc(ax.name)}が高い</text><text x="${PAD.l}" y="16">${esc(ay.name)}が高い</text>`;
-  for (const it of plot.items.filter(x => x.active)) s += point(it, sx(val(it, ax.key)), sy(val(it, ay.key)), 5);
+  const pts = plot.items.filter(x => x.active).map(it => ({it, x: sx(val(it, ax.key)), y: sy(val(it, ay.key))}));
+  const shown = roomy(pts, W);
+  for (const p of pts) s += point(p.it, p.x, p.y, 5, W, shown.has(p.it.name));
   return s;
 }
 function project(p, W, H) {
   const [x, y, z] = p, cy = Math.cos(rot.yaw), sy = Math.sin(rot.yaw), cp = Math.cos(rot.pitch), sp = Math.sin(rot.pitch);
   const x1 = x * cy + z * sy, z1 = -x * sy + z * cy, y1 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
-  const k = 4.5 / (4.5 + z2), u = Math.min(W, H) * .34;
+  const k = 4.5 / (4.5 + z2), u = Math.min(W, H) * .25;
   return {x: W / 2 + x1 * u * k, y: H / 2 - y1 * u * k, depth: z2, k};
 }
 function draw3(W, H) {
@@ -406,10 +421,13 @@ function draw3(W, H) {
   for (const a of [-1, 1]) for (const b of [-1, 1]) s += seg([-1, a, b], [1, a, b], "var(--line)") + seg([a, -1, b], [a, 1, b], "var(--line)") + seg([a, b, -1], [a, b, 1], "var(--line)");
   [[1.18, -1, -1], [-1, 1.18, -1], [-1, -1, 1.18]].forEach((p, i) => {
     const q = P(p);
-    s += `<text x="${q.x}" y="${q.y}" text-anchor="middle">${esc(axes[i].name)}</text>`;
+    const half = axes[i].name.length * 6;
+    s += `<text x="${Math.max(half, Math.min(W - half, q.x))}" y="${Math.max(14, Math.min(H - 6, q.y))}" text-anchor="middle">${esc(axes[i].name)}</text>`;
   });
-  const pts = plot.items.filter(x => x.active).map(it => ({it, p: P(axes.map(a => pct(a, val(it, a.key)) * 2 - 1))}));
-  for (const {it, p} of pts.sort((a, b) => b.p.depth - a.p.depth)) s += point(it, p.x, p.y, 5 * p.k);
+  const pts = plot.items.filter(x => x.active).map(it => ({it, ...P(axes.map(a => pct(a, val(it, a.key)) * 2 - 1))}));
+  pts.sort((a, b) => a.depth - b.depth);
+  const shown = roomy(pts, W);
+  for (const p of pts.reverse()) s += point(p.it, p.x, p.y, 5 * p.k, W, shown.has(p.it.name));
   return s;
 }
 
