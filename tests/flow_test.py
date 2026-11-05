@@ -162,6 +162,34 @@ class FlowTest(unittest.TestCase):
         self.assertIn("私も今帰ってきた", a.llm.calls[1][1]["content"])     # 書き直しは新しい発言を入れて書いた
         self.assertEqual(seen[-1], ["通す", "黙る"])                       # 書き直しの後は2択
 
+    def test_long_notice_is_not_counted_as_writing(self):
+        """気付くまでの間が3分を超えても、書いた返事を捨てない。"""
+        a, _, clock = make()
+        sent = []
+
+        async def compose(it):
+            return ["起きてる"]
+
+        async def deliver(it, out, pres):
+            sent.append(out)
+
+        def notice(pres, addressed):
+            clock["t"] += timedelta(minutes=5)
+            return 0
+        a.compose, a.deliver, a.notice = compose, deliver, notice
+        asyncio.run(a.handle(Intent("reply", "c", "short", clock["t"])))
+        self.assertEqual(sent, [["起きてる"]])
+
+    def test_time_in_queue_counts_as_notice(self):
+        """窓口で待った分は、気付くまでの間から引く。"""
+        a, _, clock = make(wait=100)
+        pres = a.persona.presence(clock["t"])
+        it = Intent("reply", "c", "short", clock["t"] - timedelta(seconds=30))
+        self.assertEqual(a.wait_sec(it, pres, clock["t"]), 70)
+        it.at = clock["t"] - timedelta(minutes=5)
+        self.assertEqual(a.wait_sec(it, pres, clock["t"]), 0)
+        self.assertEqual(a.wait_sec(Intent("late", "c", "short", clock["t"]), pres, clock["t"]), 0)
+
     def test_shadow_posts_to_compare_channel(self):
         async def go():
             a, s, clock = make(pov_ok, FakeLLM([cands("どした？")]))

@@ -36,7 +36,7 @@ INTEREST_TRUE = 0.70
 SHARE_SLACK = 1.5        # 「参加人数分の1」の何倍まで喋ってよいか
 SHARE_WINDOW = 12
 USER_DAILY_MAX, TOTAL_DAILY_MAX = 30, 150
-PENDING_TTL = timedelta(minutes=3)    # 書き始めてからこれ以上かかったら捨てる（Jev が失敗した時の歯止め）
+PENDING_TTL = timedelta(minutes=3)    # 気付くまでの間の後、これ以上かかったら捨てる（Jev が失敗した時の歯止め）
 STALE = timedelta(hours=2)            # 直近の会話がこれより古ければ「もう終わっている」と添える
 READ_AFTER_N, READ_AFTER = 6, timedelta(minutes=10)   # 後で読むのは、後の6件か10分
 NEAR_N = 10              # 自分が直近これだけの発言の中で喋っていれば「混ざっている会話」
@@ -275,15 +275,22 @@ class Agent:
             return random.uniform(60, 300)
         return random.uniform(300, 900)
 
+    def wait_sec(self, it, pres, t):
+        """書いたものを送るまでに待つ秒数。窓口で待った分は、気付くまでの間に含める。"""
+        if it.source in ("late",):
+            return 0
+        return max(0, self.notice_sec(pres, it.addressed) - (t - it.at).total_seconds())
+
     async def handle(self, it):
-        ch, t0 = it.channel, self.now()
-        pres = self.persona.presence(t0)
+        ch, t = it.channel, self.now()
+        pres = self.persona.presence(t)
         p = Pending(self, it)
         self.pending[ch] = p
         try:
-            wait = 0 if it.source in ("late",) else self.notice_sec(pres, it.addressed)
+            wait = self.wait_sec(it, pres, t)
             p.start()
             await asyncio.sleep(wait)
+            t0 = self.now()        # 気付くまでの間は、書く時間に数えない
             out = await p.result()
             if out is not None and self.now() - t0 > PENDING_TTL:
                 log.info("書くのに時間がかかりすぎたので捨てる")
