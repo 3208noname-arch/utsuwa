@@ -5,6 +5,8 @@ import os
 import time
 import unittest
 from datetime import datetime, timedelta
+from types import SimpleNamespace
+from unittest.mock import patch
 
 from harness import writer
 from harness.agent import Agent
@@ -189,6 +191,16 @@ class FlowTest(unittest.TestCase):
         it.at = clock["t"] - timedelta(minutes=5)
         self.assertEqual(a.wait_sec(it, pres, clock["t"]), 0)
         self.assertEqual(a.wait_sec(Intent("late", "c", "short", clock["t"]), pres, clock["t"]), 0)
+
+    def test_addressed_is_noticed_sooner(self):
+        """呼ばれたら9割が5〜40秒。残りも5分まで。呼ばれていなければ7割のまま。"""
+        a, _, _ = make()
+        a.notice = None
+        pres = SimpleNamespace(busy=False)
+        cases = ((0.8, True, 5, 40), (0.8, False, 60, 300), (0.97, True, 60, 300), (0.97, False, 300, 900))
+        for r, addressed, low, high in cases:
+            with patch("harness.agent.random.random", return_value=r):
+                self.assertTrue(low <= a.notice_sec(pres, addressed) <= high, (r, addressed))
 
     def test_shadow_posts_to_compare_channel(self):
         async def go():

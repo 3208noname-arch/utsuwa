@@ -263,15 +263,15 @@ class Agent:
                 log.exception("返事に失敗")
 
     def notice_sec(self, pres, addressed):
-        """気付くまでの間（minato の decide.notice_sec）。"""
+        """気付くまでの間（minato の decide.notice_sec に、呼ばれた時の早さを足した）。"""
         if self.notice:
             return self.notice(pres, addressed)
         if pres.busy:
             return random.uniform(60, 360)
         r = random.random()
-        if r < 0.7:
+        if r < (0.9 if addressed else 0.7):      # 呼ばれたら早めに気付く
             return random.uniform(5, 40)
-        if r < 0.95:
+        if r < 0.95 or addressed:
             return random.uniform(60, 300)
         return random.uniform(300, 900)
 
