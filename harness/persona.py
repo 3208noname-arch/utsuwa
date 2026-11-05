@@ -29,8 +29,12 @@ class Persona:
 
     # --- 呼ばれ方 -----------------------------------------------------------
     def names(self):
-        """この語が出たら自分が呼ばれた、とみなす正規表現。config.yaml の names から作る。"""
-        words = self.agent.config.get("names") or []
+        """この語が出たら自分が呼ばれた、とみなす正規表現。config.yaml の names から作る。
+        names_regex があればそちらを使う（「なぎ」は呼ぶが「つなぎ」は呼ばない、のような除外を書く時）。"""
+        c = self.agent.config
+        if c.get("names_regex"):
+            return re.compile(c["names_regex"], re.I)
+        words = c.get("names") or []
         return re.compile("|".join(map(re.escape, words)), re.I) if words else None
 
     # --- 時間で進むもの -------------------------------------------------------

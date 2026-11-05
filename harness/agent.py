@@ -340,6 +340,9 @@ class Agent:
         s = {"今": now_text(t), "この先1週間の予定": self.schedule().week_text(t), "直近の会話": lines,
              "返信先": writer.line(it.target, t) if it.target else "なし（誰かの発言への返事ではない）",
              "今の様子": self.persona.presence(t).label}
+        events = self.recent_events(t)
+        if events:
+            s["最近の出来事"] = "\n".join(events)
         if self.config.get("nick"):
             s["呼ばれ方"] = f"このサーバーでのあなたの表示名は {self.config['nick']}"
         s.update(self.persona.inner(t, it.target))
@@ -411,6 +414,14 @@ class Agent:
         for k in sorted(days)[:-3]:
             del days[k]
         self.h.touch()
+
+    def recent_events(self, t, n=8):
+        """今日と昨日にしたこと（体の出来事、送った返事を Jev が読んだもの）。会話用 LLM の【最近の出来事】。"""
+        days = self.h.data.get("events", {})
+        out = []
+        for d, label in (((t - timedelta(days=1)).date(), "昨日"), (t.date(), "今日")):
+            out += [f"{label} {e}" for e in days.get(d.isoformat(), [])]
+        return out[-n:]
 
     def release_deferred(self, t):
         d = self.h.data.get("deferred") or []
