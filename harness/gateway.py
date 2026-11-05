@@ -50,7 +50,8 @@ class Gateway(discord.Client):
         return {"id": str(m.id), "at": m.created_at.astimezone().replace(tzinfo=None).isoformat(timespec="seconds"),
                 "target_author": to.display_name if to else None, "target_id": str(to.id) if to else None,
                 "channel": str(m.channel.id), "author": m.author.display_name, "author_id": str(m.author.id),
-                "bot": m.author.bot, "me": m.author == self.user, "text": self.describe(m),
+                "bot": m.author.bot, "me": m.author == self.user, "text": self.describe(m), "url": m.jump_url,
+                "reply_to": str(m.reference.message_id) if m.reference else None,
                 "to_me": bool(isinstance(ref, discord.Message) and ref.author == self.user) or self.user in m.mentions,
                 "to_other": bool((isinstance(ref, discord.Message) and ref.author != self.user)
                                  or (m.mentions and self.user not in m.mentions))}

@@ -11,6 +11,7 @@ channels:
   - {id: "000000000000000001", mode: shadow}   # #雑談
   - {id: "000000000000000002", mode: live}     # テスト用チャンネル
 compare_channel: "000000000000000003"
+compare_with: {id: "000000000000000004", name: Minato}   # この Bot の返事と並べて compare_channel に出す
 notify_channel: "000000000000000003"
 
 keys: {discord: DISCORD_TOKEN, openrouter: OPENROUTER_KEY, typesafe: TYPESAFE_KEY}

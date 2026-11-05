@@ -8,7 +8,7 @@ from datetime import datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
 
-from harness import writer
+from harness import compare, writer
 from harness.agent import Agent
 from harness.outbox import Intent, Outbox
 from harness.vault import Vault
@@ -201,6 +201,71 @@ class FlowTest(unittest.TestCase):
         for r, addressed, low, high in cases:
             with patch("harness.agent.random.random", return_value=r):
                 self.assertTrue(low <= a.notice_sec(pres, addressed) <= high, (r, addressed))
+
+    def _compare(self):
+        a, s, clock = make()
+        a.vault.load = lambda rel, parse, real=a.vault.load: (
+            {**real(rel, parse), "compare_with": {"id": "rival", "name": "Minato"}} if rel == "Agents/config.yaml"
+            else real(rel, parse))
+        at = clock["t"]
+        hi = msg("1", SHADOW, "ミナ", "ねむい", at, url="https://d/1")
+        rival = msg("2", SHADOW, "感情AI", "（ミナへの返信） 寝ろ", at, bot=True, url="https://d/2", reply_to="1")
+        rival["author_id"] = "rival"
+        return a, s, clock, hi, rival, Intent("reply", SHADOW, "short", at, target=hi)
+
+    def test_compare_waits_for_the_rival_then_lines_up(self):
+        a, s, clock, hi, rival, it = self._compare()
+
+        async def go():
+            await a.on_message(hi)
+            await a.compare.mine(it, "俺も", clock["t"])
+            self.assertEqual(s.sent, [])                                   # Minato を待つ
+            await a.on_message(rival)
+            await a.compare.mine(it, "俺も", clock["t"])
+        asyncio.run(go())
+        self.assertEqual(s.sent[0][1], ["-# [寝ろ](<https://d/2>)\n俺も"])
+        self.assertEqual(len(s.sent), 1)
+
+    def test_compare_when_the_rival_is_silent(self):
+        a, s, clock, hi, _, it = self._compare()
+
+        async def go():
+            await a.on_message(hi)
+            await a.compare.mine(it, "俺も", clock["t"])
+            await a.compare.tick(clock["t"] + timedelta(minutes=2))
+            self.assertEqual(s.sent, [])
+            await a.compare.tick(clock["t"] + timedelta(minutes=3))
+        asyncio.run(go())
+        self.assertEqual(s.sent[0][1], ["-# Minatoは黙っていた（[返信先の発言](<https://d/1>)）\n俺も"])
+
+    def test_compare_when_i_am_silent_then_late(self):
+        a, s, clock, hi, rival, it = self._compare()
+
+        async def go():
+            await a.on_message(hi)
+            await a.on_message(rival)
+            await a.compare.tick(clock["t"] + timedelta(minutes=6))
+            self.assertEqual(s.sent[0][1], ["-# [寝ろ](<https://d/2>)\n（あかりは黙った）"])
+            await a.compare.mine(it, "俺も", clock["t"])                    # 遅れて書き終えたら、並べ直して出す
+        asyncio.run(go())
+        self.assertEqual(s.sent[1][1], ["-# [寝ろ](<https://d/2>)\n俺も"])
+
+    def test_compare_takes_only_the_first_rival_message(self):
+        a, s, clock, hi, rival, it = self._compare()
+
+        async def go():
+            await a.on_message(hi)
+            await a.on_message(rival)
+            second = {**rival, "id": "3", "text": "おやすみ", "url": "https://d/3", "reply_to": None}
+            await a.on_message(second)
+            await a.compare.mine(it, "俺も", clock["t"])
+        asyncio.run(go())
+        self.assertEqual(s.sent[0][1], ["-# [寝ろ](<https://d/2>)\n俺も"])
+
+    def test_compare_line_is_safe(self):
+        self.assertEqual(compare.line("（ミナの2時間前の発言への返信） a\n[b]"), "a ［b］")
+        self.assertEqual(compare.line(""), "（本文なし）")
+        self.assertEqual(len(compare.line("あ" * 300)), compare.TEXT_MAX)
 
     def test_shadow_posts_to_compare_channel(self):
         async def go():

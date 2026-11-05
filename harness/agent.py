@@ -26,6 +26,7 @@ from harness.outbox import Intent, Outbox
 from harness.persona import Persona
 from harness.recorder import Recorder, record_question
 from harness.schedule import Schedule, ago, now_text
+from harness.compare import Compare
 from harness.store import Conversation, Logs, State, my_lines
 
 log = logging.getLogger("utsuwa")
@@ -77,6 +78,7 @@ class Agent:
         self.pending = {}              # channel -> 書いている最中の返事（会話が進んだかの確かめ用）
         self.window_task = None
         self.recorder = Recorder(self)
+        self.compare = Compare(self)
         self.persona = (persona_cls or load_persona(self.config.get("persona")))(self)
         self.vault.changes()           # 書き換えの検知の起点
 
@@ -130,6 +132,8 @@ class Agent:
         p = self.pending.get(ch)
         if p and not m.get("me"):
             p.new_message()
+        if mode == "shadow" and str(m.get("author_id")) == str(self.compare.rival.get("id")):
+            await self.compare.theirs(m, list(conv.recent)[:-1], self.now())
         if m.get("bot") or m.get("me"):
             return
         recent = list(conv.recent)
@@ -312,8 +316,10 @@ class Agent:
         if mode == "shadow":
             where = self.config.get("compare_channel")
             head = f"（{it.target['author']}「{it.target['text'][:40]}」に）" if it.target else f"（{it.source}）"
-            body = out if isinstance(out, str) else "／".join(out)
-            if where:
+            body = f"（リアクション {out}）" if isinstance(out, str) else "\n".join(out)
+            if where and it.target and self.compare.rival:
+                await self.compare.mine(it, body, t)
+            elif where:
                 await self.sender.send(str(where), [head + body], reply_to=None, typing=[0])
             log.info("影: %s%s", head, body)
             return
@@ -395,6 +401,7 @@ class Agent:
                     self.offer(Intent("announce", ch, "short", t, note=note))
         self.take_requests(t)
         await self.persona.slow(t)
+        await self.compare.tick(t)
         self.release_deferred(t)
         for ch in self.live_channels():
             self.pickup(ch, t)
