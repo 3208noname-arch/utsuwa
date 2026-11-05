@@ -52,6 +52,7 @@ pip install -r requirements.txt
 cp .env.example .env               # 鍵を書く
 python -m harness "template/あかり" --check   # Discord に繋がずに、フォルダを読めるか確かめる
 python -m harness "/path/to/Vault/12 AIたち/あかり" --env .env
+python -m harness.ui "/path/to/Vault/12 AIたち/あかり" --env .env   # 様子を見る Web UI（.env の UI_HOST、UI_PORT で待ち受ける）
 ```
 
 ## 人格の部品
