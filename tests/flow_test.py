@@ -223,8 +223,7 @@ class FlowTest(unittest.TestCase):
             await a.on_message(rival)
             await a.on_message({**rival, "id": "3", "text": "おやすみ", "reply_to": None})
         asyncio.run(go())
-        self.assertEqual(s.sent, [(COMPARE, ["-# [寝ろ](<https://d/2>)
-俺も"], None)])
+        self.assertEqual(s.sent, [(COMPARE, ["-# [寝ろ](<https://d/2>)\n俺も"], None)])
 
     def test_compare_when_the_rival_is_silent(self):
         a, s, clock, hi, _, it = self._compare()
