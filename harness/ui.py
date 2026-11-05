@@ -192,16 +192,16 @@ def app(root):
             raise web.HTTPBadRequest(text="本文が空")
         return text.strip()
 
-    async def service(unit):
+    async def service(name, unit):
         out = await run("systemctl", "show", unit, "-p", "ActiveState", "-p", "ActiveEnterTimestamp")
         kv = dict(x.split("=", 1) for x in (out or "").splitlines() if "=" in x)
-        return {"name": unit, "state": kv.get("ActiveState", "?"), "since": kv.get("ActiveEnterTimestamp", "")}
+        return {"name": name, "state": kv.get("ActiveState", "?"), "since": kv.get("ActiveEnterTimestamp", "")}
 
     async def info(_):
         config = Agent(vault, None, None, None).config
         commit = await run("git", "-C", HERE, "log", "-1", "--format=%h %cd", "--date=format:%m-%d %H:%M")
         return web.json_response({"version": __version__, "commit": (commit or "").strip(),
-                                  "services": [await service(unit_name(root)), await service(unit_name(root, "utsuwa-ui"))],
+                                  "services": [await service("Bot", unit_name(root)), await service("Web UI", unit_name(root, "utsuwa-ui"))],
                                   **{"sections": [], "facts": [], **(config.get("links") or {})}})
 
     async def ratings(_):
