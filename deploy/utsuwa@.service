@@ -1,14 +1,11 @@
 # 1人のエージェントにつき1つ動かす。%i はエージェントのフォルダ名（例: systemctl enable --now utsuwa@ナギ）
-# Vault はエージェントたちのフォルダ（12 AIたち/）だけを /mnt/ai_agents にマウントする。それより上はこの CT から見えない
-#   /etc/fstab: //192.168.100.2/Obsidian_souko/12 AIたち  /mnt/ai_agents  cifs  credentials=/root/.smb-omv,uid=0,gid=0,_netdev,x-systemd.automount  0 0
 [Unit]
 Description=utsuwa agent %i
 After=network-online.target remote-fs.target
 
 [Service]
 WorkingDirectory=/opt/utsuwa
-# md は Vault（同期に乗る）、数値の状態と会話の原本は CT の /var/lib/utsuwa/%i（同期に乗せず、Web UI で見る）
-ExecStart=/opt/utsuwa/venv/bin/python -m harness "/mnt/ai_agents/%i" --data "/var/lib/utsuwa/%i" --env /opt/utsuwa/.env
+ExecStart=/opt/utsuwa/venv/bin/python -m harness "/mnt/omv_obsidian/12 AIたち/%i" --env /opt/utsuwa/.env
 Restart=on-failure
 RestartSec=30
 

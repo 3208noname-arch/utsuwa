@@ -21,10 +21,6 @@ LLM に輪を回させないので、会話用の LLM が読む量を小さく�
 └─ 03 Logs/             会話と評価の原本（JSONL）
 ```
 
-`02 State/` と `03 Logs/` は、`--data` で Vault の外（動かすマシンの中）に置ける。
-Vault には人が読み書きする md だけを置き、頻繁に書く JSON と友人の発言の原本を同期に乗せないため。
-見本は全部を1つのフォルダに入れてある。
-
 見本は [`template/あかり/`](template/あかり/)（架空の人物）。
 フォルダを Vault に写し、`Agents/` を書き換えれば、別のエージェントになる。
 Obsidian で md を直すと、次に読む時から効く（再起動は要らない）。
@@ -55,7 +51,7 @@ Obsidian で md を直すと、次に読む時から効く（再起動は要ら�
 pip install -r requirements.txt
 cp .env.example .env               # 鍵を書く
 python -m harness "template/あかり" --check   # Discord に繋がずに、フォルダを読めるか確かめる
-python -m harness "/path/to/Vault/12 AIたち/あかり" --data /var/lib/utsuwa/あかり --env .env
+python -m harness "/path/to/Vault/12 AIたち/あかり" --env .env
 ```
 
 ## 人格の部品
