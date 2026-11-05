@@ -221,10 +221,10 @@ class FlowTest(unittest.TestCase):
             await a.compare.mine(it, "俺も", clock["t"])
             self.assertEqual(s.sent, [])                                   # Minato を待つ
             await a.on_message(rival)
-            await a.compare.mine(it, "俺も", clock["t"])
+            await a.on_message({**rival, "id": "3", "text": "おやすみ", "reply_to": None})
         asyncio.run(go())
-        self.assertEqual(s.sent[0][1], ["-# [寝ろ](<https://d/2>)\n俺も"])
-        self.assertEqual(len(s.sent), 1)
+        self.assertEqual(s.sent, [(COMPARE, ["-# [寝ろ](<https://d/2>)
+俺も"], None)])
 
     def test_compare_when_the_rival_is_silent(self):
         a, s, clock, hi, _, it = self._compare()
