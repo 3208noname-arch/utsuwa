@@ -18,7 +18,9 @@ import yaml
 from aiohttp import web
 
 from harness.__main__ import load_env
-from harness.agent import TOTAL_DAILY_MAX, Agent, day_key
+from harness import __version__, context
+from harness.agent import STARTS_PER_DAY, TOTAL_DAILY_MAX, Agent, day_key
+from harness.night import INACTIVE
 from harness.vault import Vault
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -27,10 +29,10 @@ NOTES = "03 Logs/notes.json"   # お知らせの下書きと流した記録。�
 NOTE_MAX = 2000                # Discord の1メッセージの上限
 
 
-def unit_name(root):
+def unit_name(root, base="utsuwa"):
     """systemd のサービス名。日本語のフォルダ名は \\xNN の形になる。"""
     name = os.path.basename(root.rstrip("/\\"))
-    return "utsuwa@" + "".join(c if c.isascii() else "".join(f"\\x{b:02x}" for b in c.encode()) for c in name) + ".service"
+    return f"{base}@" + "".join(c if c.isascii() else "".join(f"\\x{b:02x}" for b in c.encode()) for c in name) + ".service"
 
 
 async def run(*cmd):
@@ -53,11 +55,44 @@ def read_state(root):
     agent = Agent(Vault(root), None, None, None)       # 読むたびに作り直す。ファイルの今の中身を見せる
     t = agent.now()
     h, c = agent.h.data, agent.h.data.get("counts", {})
+    st = h.get("starts", {})
     return {"name": agent.config.get("name", os.path.basename(root)), "now": t.isoformat(timespec="seconds"),
             "saved_at": saved_at(root), "view": agent.persona.view(t),
             "replies": c.get("total", 0) if c.get("day") == day_key(t) else 0, "replies_max": TOTAL_DAILY_MAX,
             "deferred": len(h.get("deferred", [])),
-            "events": list(reversed(h.get("events", {}).get(t.date().isoformat(), [])))}
+            "starts": st.get("n", 0) if st.get("day") == day_key(t) else 0, "starts_max": STARTS_PER_DAY,
+            "events": list(reversed(agent.recent_events(t, 12)))}
+
+
+def read_ratings(root):
+    """評価の集計と一覧。同じ人が同じ発言を評価し直したら、新しい方だけ数える。"""
+    latest = {}
+    for p in sorted(glob.glob(os.path.join(root, "03 Logs", "ratings", "*.jsonl"))):
+        with open(p, encoding="utf-8") as f:
+            for r in map(json.loads, filter(str.strip, f)):
+                latest.pop((r["message_id"], r.get("rater")), None)
+                latest[(r["message_id"], r.get("rater"))] = r
+    items = list(reversed(latest.values()))
+    summary = {}
+    for r in items:
+        who = summary.setdefault("bot" if r.get("is_me") else "human", {})
+        who[r["label"]] = who.get(r["label"], 0) + 1
+    return {"summary": summary, "items": items[:200]}
+
+
+def read_lessons(root):
+    rows = sorted(context.lesson_rows(Vault(root)), key=lambda r: r.date, reverse=True)
+    return {"items": [{"rel": r.rel, "kind": r.kind, "name": r.name, "date": r.date, "people": r.people, "body": r.body}
+                      for r in rows]}
+
+
+def lesson_off(root, rel):
+    """記憶を使わなくする。消さずに status を変えるので、Obsidian で戻せる。"""
+    vault = Vault(root)
+    if not any(r.rel == rel for r in context.lesson_rows(vault)):
+        return "その記憶は無い"
+    vault.set_meta(rel, "status", INACTIVE)
+    return None
 
 
 def read_chat(root, day):
@@ -75,12 +110,32 @@ def read_chat(root, day):
                       "shadow": str(r.get("channel")) in shadow} for r in reversed(rows[-CHAT_MAX:])]}
 
 
+def add_topic_request(agent, body, plot):
+    """話題を足す、消す依頼。"""
+    name = body.get("name")
+    if not isinstance(name, str) or not 1 <= len(name.strip()) <= 20:
+        return "名前は1〜20文字"
+    name = name.strip()
+    known = any(x["name"] == name for x in plot["items"])
+    if body["kind"] == "topic_add" and known:
+        return "同じ名前の話題がある"
+    if body["kind"] == "topic_del" and not known:
+        return "話題が無い"
+    req = {"kind": body["kind"], "name": name}
+    if body["kind"] == "topic_add":
+        req["note"] = str(body.get("note") or "").strip()[:80]
+    agent.vault.write_json(f"02 State/requests/{time.time_ns()}.json", req)
+    return None
+
+
 def add_request(root, body):
     """値の変更依頼を置く。Bot が次の分に受け取る。おかしければ理由の文字列を返す。"""
     agent = Agent(Vault(root), None, None, None)
     plot = agent.persona.view(agent.now()).get("plot")
     if not plot or not isinstance(body, dict):
         return "依頼を受けられない"
+    if body.get("kind") in ("topic_add", "topic_del"):
+        return add_topic_request(agent, body, plot)
     axis = next((a for a in plot["axes"] if a["key"] == body.get("key")), None)
     if not axis or not any(x["name"] == body.get("name") for x in plot["items"]):
         return "話題か軸が無い"
@@ -136,6 +191,36 @@ def app(root):
         if not isinstance(text, str) or not text.strip():
             raise web.HTTPBadRequest(text="本文が空")
         return text.strip()
+
+    async def service(unit):
+        out = await run("systemctl", "show", unit, "-p", "ActiveState", "-p", "ActiveEnterTimestamp")
+        kv = dict(x.split("=", 1) for x in (out or "").splitlines() if "=" in x)
+        return {"name": unit, "state": kv.get("ActiveState", "?"), "since": kv.get("ActiveEnterTimestamp", "")}
+
+    async def info(_):
+        config = Agent(vault, None, None, None).config
+        commit = await run("git", "-C", HERE, "log", "-1", "--format=%h %cd", "--date=format:%m-%d %H:%M")
+        return web.json_response({"version": __version__, "commit": (commit or "").strip(),
+                                  "services": [await service(unit_name(root)), await service(unit_name(root, "utsuwa-ui"))],
+                                  **{"sections": [], "facts": [], **(config.get("links") or {})}})
+
+    async def ratings(_):
+        return web.json_response(await asyncio.to_thread(read_ratings, root))
+
+    async def lessons(_):
+        return web.json_response(await asyncio.to_thread(read_lessons, root))
+
+    async def lessons_off(req):
+        if req.content_type != "application/json":
+            raise web.HTTPUnsupportedMediaType()
+        try:
+            body = await req.json()
+        except ValueError:
+            body = None
+        why = await asyncio.to_thread(lesson_off, root, body.get("rel")) if isinstance(body, dict) else "依頼を受けられない"
+        if why:
+            raise web.HTTPBadRequest(text=why)
+        return web.json_response(await asyncio.to_thread(read_lessons, root))
 
     async def notes_get(_):
         return web.json_response(notes())
@@ -215,7 +300,8 @@ def app(root):
     a.add_routes([web.get("/", page), web.get("/api/state", state), web.get("/api/chat", chat), web.get("/api/log", log),
                   web.post("/api/plot", plot), web.get("/api/notes", notes_get), web.post("/api/notes", notes_new),
                   web.put("/api/notes/{id}", notes_put), web.delete("/api/notes/{id}", notes_delete),
-                  web.post("/api/notes/{id}/post", notes_post)])
+                  web.post("/api/notes/{id}/post", notes_post), web.get("/api/ratings", ratings),
+                  web.get("/api/lessons", lessons), web.post("/api/lessons/off", lessons_off), web.get("/api/info", info)])
     return a
 
 

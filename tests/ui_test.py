@@ -112,6 +112,71 @@ class UiTest(unittest.TestCase):
         self.assertTrue(all(len(x) <= 2000 for x in parts))
         self.assertEqual("".join(parts), text)
 
+    def test_ratings_are_counted_once_per_person(self):
+        root = copy_template()
+        os.makedirs(f"{root}/03 Logs/ratings", exist_ok=True)
+        rows = [{"message_id": "1", "rater": "A", "label": "自然", "is_me": True, "text": "x", "at": "2026-11-05T10:00:00"},
+                {"message_id": "1", "rater": "A", "label": "バグ", "is_me": True, "text": "x", "at": "2026-11-05T10:01:00"},
+                {"message_id": "2", "rater": "A", "label": "自然", "is_me": False, "text": "y", "at": "2026-11-05T10:02:00"}]
+        with open(f"{root}/03 Logs/ratings/2026-11.jsonl", "w", encoding="utf-8") as f:
+            f.write("".join(json.dumps(r, ensure_ascii=False) + chr(10) for r in rows))
+        d = fetch(root, "/api/ratings")[0]
+        self.assertEqual(d["summary"], {"bot": {"バグ": 1}, "human": {"自然": 1}})
+        self.assertEqual([r["message_id"] for r in d["items"]], ["2", "1"])
+
+    def test_lesson_off_keeps_the_note(self):
+        root = copy_template()
+        v = Vault(root)
+        rel = "01 Lessons/01 常識/銭湯.md"
+        v.write_note(rel, {"date": "2026-11-05", "種類": "常識", "status": "active"}, "銭湯は550円")
+
+        async def go():
+            async with TestClient(TestServer(ui.app(root))) as c:
+                first = (await (await c.get("/api/lessons")).json())["items"]
+                self.assertIn(rel, [x["rel"] for x in first])
+                self.assertEqual((await c.post("/api/lessons/off", json={"rel": "../x.md"})).status, 400)
+                return await (await c.post("/api/lessons/off", json={"rel": rel})).json()
+        self.assertNotIn(rel, [x["rel"] for x in asyncio.run(go())["items"]])
+        self.assertEqual(Vault(root).note(rel).meta["status"], "inactive")
+
+    def test_info_has_links_from_config(self):
+        root = copy_template()
+        as_nagi(root)
+        with open(f"{root}/Agents/config.yaml", "a", encoding="utf-8") as f:
+            f.write(chr(10) + 'links: {facts: [["置き場", "CT"]]}' + chr(10))
+        d = fetch(root, "/api/info")[0]
+        self.assertEqual((d["facts"], d["sections"]), ([["置き場", "CT"]], []))
+        self.assertEqual(len(d["services"]), 2)
+
+    def test_mechs_come_from_state(self):
+        root = copy_template()
+        as_nagi(root)
+        v = fetch(root, "/api/state")[0]["view"]
+        self.assertGreater(len(v["mechs"]), 5)
+        self.assertTrue(all(x["name"] and x["now"] is not None for x in v["mechs"]))
+
+    def test_topic_add_and_delete_go_through_requests(self):
+        root = copy_template()
+        as_nagi(root)
+        os.makedirs(f"{root}/02 State", exist_ok=True)
+        with open(f"{root}/02 State/topics.json", "w", encoding="utf-8") as f:
+            json.dump({"topics": [{"name": "虫", "valence": -0.8, "arousal": 0.9, "note": ""}]}, f, ensure_ascii=False)
+
+        async def go():
+            async with TestClient(TestServer(ui.app(root))) as c:
+                async def code(**body):
+                    return (await c.post("/api/plot", json=body)).status
+                return [await code(kind="topic_add", name="虫"), await code(kind="topic_del", name="無い"),
+                        await code(kind="topic_add", name="x" * 21), await code(kind="topic_add", name="猫", note="好き"),
+                        await code(kind="topic_del", name="虫")]
+        self.assertEqual(asyncio.run(go()), [400, 400, 400, 200, 200])
+        self.assertTrue(os.path.exists(f"{root}/02 State/topics.json"))
+        before = json.load(open(f"{root}/02 State/topics.json", encoding="utf-8"))
+        self.assertEqual([x["name"] for x in before["topics"]], ["虫"])      # UI は直接書かない
+        a = Agent(Vault(root), None, None, None)
+        a.take_requests(datetime(2026, 11, 9, 20, 0))
+        self.assertEqual([(x["name"], x["note"]) for x in a.persona.topic_list], [("猫", "好き")])
+
     def test_unit_name_is_escaped(self):
         self.assertEqual(ui.unit_name("/x/ナギ"), r"utsuwa@\xe3\x83\x8a\xe3\x82\xae.service")
 

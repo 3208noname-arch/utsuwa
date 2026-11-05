@@ -167,7 +167,48 @@ class Nagi(Persona):
                       "legend": "直近24時間の快・不快。上が快、下が不快。薄い帯が「ふつう」の範囲。点は気分を動かした出来事"},
             "people": [self.view_likes(t), self.view_anger(t), self.view_names()],
             "plot": self.view_plot(),
+            "mechs": self.view_mechs(t),
         }
+
+    def snapshot(self, t, target=None):
+        base = self.mood_base(t)
+        m = dict(self.m, events=list(self.m["events"]))
+        mood.settle(m, t, base)
+        words = re.sub(r"（.*）$", "", mood.as_words(m, base))
+        parts = [self.presence(t).label, words, f"眠気{round(body.felt_sleepy(self.b, t))} 空腹{round(self.b['hunger'])} "
+                                                f"気力{round(self.b['energy'])}"]
+        like = self.likes.data.get(str(target))
+        if like:
+            parts.append(f"相手への好感度{like.get('v', 0):+.1f}")
+        return "・".join(parts + [f"気分{m['v']:+.0f}"])
+
+    def view_mechs(self, t):
+        """仕組みごとの今の値。説明は人が書き、値は状態から出す。"""
+        base = self.mood_base(t)
+        m = dict(self.m, events=list(self.m["events"]))
+        mood.settle(m, t, base)
+        tps, likes = self.topic_list, self.likes.data
+        learned = [x for x in tps if x.get("source") == "learned"]
+        anger_now = [f"{x['name']} {x['value']}" for x in self.view_anger(t)["items"]]
+        q = self.policy_state.data.get("q", {})
+        rows = [
+            ("体（眠気、空腹、気力、残高）", "寝る、起きる、食べる、抜けるを自分で選ぶ。体の感じを言葉で会話用 LLM に渡す",
+             f"{body.as_feelings(self.b, t)}・残高{self.b['money']:,}円"),
+            ("曜日と予定", "日付、曜日、授業とバイトの予定を会話用 LLM に渡す", decide.day_text(t)),
+            ("居心地（気分）", "体、人、話題で動き、時間で基準へ戻る", f"{mood.as_words(m, base)}（{m['v']:+.0f}）"),
+            ("話題の好き嫌い", "話題が会話に出ると、値に応じて気分を動かす", f"{len(tps) - len(learned)}件（人が置いた分）"),
+            ("口にした好き嫌いを覚える", "会話で言った好き嫌いを話題に足す。消さずに眠らせる",
+             f"{len(learned)}件" + (f"（最近: {learned[-1]['name']}）" if learned else "")),
+            ("好感度", "相手の発言を判定して数え、気分も動かす",
+             f"{len(likes)}人・" + "、".join(f"{p.get('display')}{p.get('v', 0):+.0f}" for p in
+                                            sorted(likes.values(), key=lambda p: -p.get("v", 0))[:3])),
+            ("呼び名", "誰が誰をどう呼ぶかを集める", f"{len(self.names_state.data)}人分"),
+            ("怒り（人ごと）", "けなしや見下しで積み、時間で冷める", "、".join(anger_now) or "誰にも怒っていない"),
+            ("経験で話題を育てる", "話題が出た後の反応で、話題の値を少し動かす", f"見ている話題 {len(self.mem.data.get('episodes', []))}件"),
+            ("混ざり方を予想で選ぶ", "話しかけられていない時の混ざり方を、居心地の予想で選ぶ",
+             "予想 " + ("、".join(f"{k}{v:+.1f}" for k, v in q.items()) or "まだ無い")),
+        ]
+        return [{"name": n, "does": d, "now": v} for n, d, v in rows]
 
     def view_plot(self):
         active = {id(x) for x in topics.active(self.topic_list, "")}
@@ -512,6 +553,17 @@ class Nagi(Persona):
                     self.topics_state.touch()
 
     def on_request(self, req, t):
+        if req.get("kind") == "topic_add":
+            if not any(x["name"] == req.get("name") for x in self.topic_list):
+                # 新しい軸の値は、1分ごとの片付けで Jev が埋める
+                self.topic_list.append({"name": req["name"], "valence": 0.0, "arousal": 0.5, "note": req.get("note", ""),
+                                        "anchor": {"valence": 0.0, "arousal": 0.5}})
+                self.topics_state.touch()
+            return
+        if req.get("kind") == "topic_del":
+            self.topics_state.data["topics"] = [x for x in self.topic_list if x["name"] != req.get("name")]
+            self.topics_state.touch()
+            return
         tp = next((x for x in self.topic_list if x["name"] == req.get("name")), None)
         axis = next((x for x in self.axes if x["key"] == req.get("key")), None)
         if req.get("kind") != "plot" or not tp or not axis:

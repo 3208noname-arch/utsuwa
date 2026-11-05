@@ -89,6 +89,7 @@ details.person .rows{border-top:0;margin:0 0 10px 10px}
 .subs{display:flex;gap:6px;margin:0 0 12px}
 .sub{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 14px;min-height:36px;cursor:pointer}
 .sub[aria-selected=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.subs[hidden]{display:none}
 .tools{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
 .search,select{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px;min-height:42px}
 .search{flex:1 1 200px;max-width:360px}
@@ -96,6 +97,10 @@ details.person .rows{border-top:0;margin:0 0 10px 10px}
 pre.log{white-space:pre-wrap;word-break:break-all;font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;margin:0;max-height:70vh;overflow:auto;
   background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px}
 
+.btn.del{margin-top:8px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+.rows li.line p{margin:4px 0 0}
+.rows li.line .mute{font-size:13px}
 .note{margin:0 0 14px}
 .note textarea{width:100%;min-height:220px;box-sizing:border-box;background:var(--surface);color:var(--ink);border:1px solid var(--line);
   border-radius:12px;padding:12px;font:inherit;resize:vertical}
@@ -134,6 +139,7 @@ details.sleep>summary{cursor:pointer;color:var(--mute);padding:8px 2px}
 </div></header>
 
 <main>
+<div class="subs" id="subs" role="tablist" aria-label="中の画面" hidden></div>
 <section class="view" id="v-now">
   <p class="down" id="down" hidden></p>
   <div class="night">
@@ -147,7 +153,7 @@ details.sleep>summary{cursor:pointer;color:var(--mute);padding:8px 2px}
   <p class="facts" id="facts"></p>
   <div class="body4" id="meters"></div>
   <div id="moved" hidden><h2>気分を動かした出来事</h2><ul class="rows" id="movedList"></ul></div>
-  <h2>今日の出来事</h2><ul class="rows" id="events"></ul>
+  <h2>最近の出来事</h2><ul class="rows" id="events"></ul>
 </section>
 
 <section class="view" id="v-people"><div id="people"></div></section>
@@ -163,11 +169,41 @@ details.sleep>summary{cursor:pointer;color:var(--mute);padding:8px 2px}
   </div>
   <svg class="plot" id="plot" role="img" aria-label="話題の位置の図"></svg>
   <p class="status" id="plotMsg" role="status"></p>
+  <h2>話題を足す</h2>
+  <form class="tools" id="topicAdd">
+    <input class="search" id="topicName" maxlength="20" required placeholder="話題の名前" aria-label="話題の名前">
+    <input class="search" id="topicNote" maxlength="80" placeholder="注記（空欄でよい）" aria-label="話題の注記">
+    <button class="btn" type="submit">足す</button>
+  </form>
   <h2>使っている話題</h2>
   <p class="lead">名前を押すと全部の軸が出る。動かすと次の1分で Bot に届く。</p>
   <div class="person-list" id="topics"></div>
   <details class="sleep" id="sleepBox"><summary id="sleepSum"></summary><div class="person-list" id="sleeping"></div></details>
   <h2>最近動いた話題</h2><ul class="rows" id="plotMoved"></ul>
+</section>
+
+<section class="view" id="v-mech">
+  <p class="lead">仕組みごとの今の値。値は状態から出している。</p>
+  <ul class="rows" id="mechs"></ul>
+</section>
+
+<section class="view" id="v-lessons">
+  <p class="lead">覚えていること。「使わなくする」は消さずに <code>status: inactive</code> にするので、Obsidian で戻せる。</p>
+  <div class="tools"><input class="search" id="lessonFilter" placeholder="言葉で絞り込む" aria-label="記憶を絞り込む"></div>
+  <p class="status" id="lessonMsg" role="status"></p>
+  <ul class="rows" id="lessons"></ul>
+</section>
+
+<section class="view" id="v-rate">
+  <div id="rateSum"></div>
+  <ul class="rows" id="ratings"></ul>
+</section>
+
+<section class="view" id="v-info">
+  <p class="facts" id="infoVer"></p>
+  <h2>サービス</h2><ul class="rows" id="services"></ul>
+  <div id="infoLinks"></div>
+  <h2>覚え書き</h2><ul class="rows" id="infoFacts"></ul>
 </section>
 
 <section class="view" id="v-notes">
@@ -215,36 +251,48 @@ const TABS = [
   ["now", "いま", '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>'],
   ["people", "人", '<svg viewBox="0 0 24 24"><circle cx="9" cy="9" r="3.2"/><path d="M3.5 19c.8-3 3-4.6 5.5-4.6s4.7 1.6 5.5 4.6"/><circle cx="17" cy="8" r="2.4"/><path d="M16 13.6c2.2.2 3.8 1.6 4.5 4"/></svg>'],
   ["plot", "話題", '<svg viewBox="0 0 24 24"><path d="M4 4v16h16"/><circle cx="10" cy="14" r="1.6"/><circle cx="15" cy="8" r="1.6"/><circle cx="18" cy="14" r="1.6"/></svg>'],
-  ["notes", "お知らせ", '<svg viewBox="0 0 24 24"><path d="M4 10v4h3l7 4V6l-7 4z"/><path d="M17 9.5a3.5 3.5 0 0 1 0 5"/></svg>'],
-  ["log", "ログ", '<svg viewBox="0 0 24 24"><path d="M7 4h10v16H7z"/><path d="M10 8h4M10 12h4M10 16h2"/></svg>'],
+  ["rec", "記録", '<svg viewBox="0 0 24 24"><path d="M7 4h10v16H7z"/><path d="M10 8h4M10 12h4M10 16h2"/></svg>'],
 ];
-let cur = {tab: "now", log: "chat", dim: 2, x: null, y: null, z: null};
+const SUBS = {now: [["now", "様子"], ["mech", "仕組み"]], people: [["people", "人"]],
+              plot: [["plot", "話題"], ["lessons", "教わったこと"]],
+              rec: [["rate", "評価"], ["log", "ログ"], ["notes", "お知らせ"], ["info", "情報"]]};
+let cur = {tab: "now", subs: {}, log: "chat", dim: 2, x: null, y: null, z: null};
 try { cur = {...cur, ...JSON.parse(localStorage.getItem("utsuwa-ui") || "{}")}; } catch {}
 if (!TABS.some(x => x[0] === cur.tab)) cur.tab = "now";
+const subsOf = tab => SUBS[tab].filter(x => x[0] !== "plot" || plot);
+const view = () => { const l = subsOf(cur.tab); return l.some(x => x[0] === cur.subs[cur.tab]) ? cur.subs[cur.tab] : l[0][0]; };
 
 function render() {
   const btn = ([id, name, icon]) => `<button class="grp" type="button" data-tab="${id}" aria-selected="${id === cur.tab}">${icon}<span>${name}</span></button>`;
-  const tabs = TABS.filter(x => x[0] !== "plot" || plot);
+  const tabs = TABS.map(x => x[0] === "plot" && !plot ? [x[0], "記憶", x[2]] : x);
   $("#tabs").innerHTML = $("#tabsTop").innerHTML = tabs.map(btn).join("");
   $("#tabs").style.gridTemplateColumns = `repeat(${tabs.length},1fr)`;
-  document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + cur.tab));
-  document.querySelectorAll(".sub").forEach(b => b.setAttribute("aria-selected", b.dataset.log === cur.log));
+  const v = view(), subs = subsOf(cur.tab);
+  $("#subs").hidden = subs.length < 2;
+  $("#subs").innerHTML = subs.map(([id, name]) => `<button class="sub" type="button" role="tab" data-sub="${id}" aria-selected="${id === v}">${name}</button>`).join("");
+  document.querySelectorAll(".view").forEach(x => x.classList.toggle("on", x.id === "v-" + v));
+  document.querySelectorAll("[data-log]").forEach(b => b.setAttribute("aria-selected", b.dataset.log === cur.log));
   $("#chatBox").hidden = cur.log !== "chat";
   $("#runBox").hidden = cur.log !== "run";
-  if (cur.tab === "now") drawTrend();
-  if (cur.tab === "plot") drawPlot();
-  if (cur.tab === "log") cur.log === "chat" ? loadChat() : loadRun();
-  if (cur.tab === "notes") loadNotes();
+  if (v === "now") drawTrend();
+  if (v === "plot") drawPlot();
+  if (v === "log") cur.log === "chat" ? loadChat() : loadRun();
+  if (v === "notes") loadNotes();
+  if (v === "mech") showMechs();
+  if (v === "lessons") loadLessons();
+  if (v === "rate") loadRatings();
+  if (v === "info") loadInfo();
   try { localStorage.setItem("utsuwa-ui", JSON.stringify(cur)); } catch {}
 }
 document.addEventListener("click", e => {
-  const t = e.target.closest("[data-tab]"), l = e.target.closest("[data-log]");
+  const t = e.target.closest("[data-tab]"), l = e.target.closest("[data-log]"), u = e.target.closest("[data-sub]");
+  if (u) { cur.subs[cur.tab] = u.dataset.sub; render(); }
   if (t) { cur.tab = t.dataset.tab; render(); scrollTo(0, 0); }
   if (l) { cur.log = l.dataset.log; render(); }
 });
 
 // --- いま ---
-let trend = null;
+let trend = null, state = null;
 function age(s) {
   if (!s.saved_at) return "状態の記録はまだ無い。";
   const min = Math.max(0, Math.round((new Date(s.now) - new Date(s.saved_at)) / 60000));
@@ -263,7 +311,11 @@ async function loadState() {
   const v = s.view;
   $("#say").textContent = v.say;
   $("#why").textContent = v.why;
+  state = s;
+  if (view() === "mech") showMechs();
   $("#facts").textContent = `今日は ${s.replies} 回返事した（1日 ${s.replies_max} 回まで）。` +
+    `自分から話しかけたのは ${s.starts} 回（1日 ${s.starts_max} 回まで）。` +
+    (s.view.device ? `${s.name}は今${s.view.device === "PC" ? "PC" : "スマホ"}を見ている。` : "") +
     (s.deferred ? `後で返す約束が ${s.deferred} 件ある。` : "") + age(s);
   $("#meters").innerHTML = v.meters.map(m => `<div class="m"><div class="k">${esc(m.name)}</div>
     <div class="v">${Number(m.value).toLocaleString()}${m.unit ? `<small>${esc(m.unit)}</small>` : ""}</div>
@@ -352,7 +404,7 @@ function showPlot() {
   }
   document.querySelectorAll("[data-dim]").forEach(b => b.setAttribute("aria-pressed", +b.dataset.dim === cur.dim));
   $("#axZBox").hidden = cur.dim !== 3;
-  if (cur.tab === "plot") drawPlot();
+  if (view() === "plot") drawPlot();
   if (document.activeElement?.type === "range") return;   // 動かしている最中のスライダーを壊さない
   const sorted = plot.items.slice().sort((a, b) => val(b, cur.x) - val(a, cur.x));
   const on = sorted.filter(x => x.active), off = sorted.filter(x => !x.active);
@@ -371,7 +423,8 @@ function topicRow(it) {
     <span class="mute">${esc(axis(cur.x).name)} ${short(val(it, cur.x))}</span></summary>
     <div class="topic-body">${it.note ? `<p class="note">${esc(it.note)}</p>` : ""}${a.map(x => `<label class="axis"><span>${esc(x.name)}</span>
       <input type="range" min="${x.min}" max="${x.max}" step=".01" value="${val(it, x.key)}" data-key="${esc(x.key)}">
-      <span class="num">${short(val(it, x.key))}</span></label>`).join("")}</div></details>`;
+      <span class="num">${short(val(it, x.key))}</span></label>`).join("")}
+      <button class="btn del" type="button" data-del="${esc(it.name)}">この話題を消す</button></div></details>`;
 }
 async function save(name, key, value) {
   const id = `${name}/${key}`;
@@ -530,6 +583,65 @@ $("#day").addEventListener("change", e => loadChat(e.target.value));
 $("#chatFilter").addEventListener("input", showChat);
 $("#runFilter").addEventListener("input", showRun);
 $("#reload").addEventListener("click", loadRun);
+
+// --- 話題を足す、消す ---
+async function topicCall(body, done) {
+  const r = await fetch("api/plot", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)});
+  $("#plotMsg").textContent = r.ok ? done : `送れなかった（${await r.text()}）`;
+  return r.ok;
+}
+$("#topicAdd").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (await topicCall({kind: "topic_add", name: $("#topicName").value, note: $("#topicNote").value}, "足した。次の1分で Bot に届く")) e.target.reset();
+});
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-del]");
+  if (b && confirm(`「${b.dataset.del}」を消しますか`)) topicCall({kind: "topic_del", name: b.dataset.del}, "消した。次の1分で Bot に届く");
+});
+
+// --- 仕組み ---
+function showMechs() {
+  $("#mechs").innerHTML = (state?.view.mechs || []).map(x => `<li class="line"><b>${esc(x.name)}</b><p>${esc(x.now)}</p><p class="mute">${esc(x.does)}</p></li>`).join("") || none("この人格には無い");
+}
+
+// --- 教わったこと ---
+let lessonRows = [];
+function showLessons() {
+  const q = $("#lessonFilter").value.trim();
+  const rows = lessonRows.filter(x => !q || (x.name + x.body + x.people.join("")).includes(q));
+  $("#lessons").innerHTML = rows.map(x => `<li class="line"><span class="chip">${esc(x.kind)}</span> <b>${esc(x.name)}</b>
+    <span class="mute">${esc(x.date)}${x.people.length ? "・" + esc(x.people.join("、")) : ""}</span><p>${esc(x.body.slice(0, 200))}</p>
+    <button class="btn del" type="button" data-off="${esc(x.rel)}">使わなくする</button></li>`).join("") || none("まだ無い");
+}
+async function loadLessons() { lessonRows = (await json("api/lessons")).items; showLessons(); }
+$("#lessonFilter").addEventListener("input", showLessons);
+$("#lessons").addEventListener("click", async e => {
+  const b = e.target.closest("[data-off]");
+  if (!b || !confirm("この記憶を使わなくしますか")) return;
+  const r = await fetch("api/lessons/off", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({rel: b.dataset.off})});
+  $("#lessonMsg").textContent = r.ok ? "使わなくした" : await r.text();
+  if (r.ok) { lessonRows = (await r.json()).items; showLessons(); }
+});
+
+// --- 評価 ---
+async function loadRatings() {
+  const d = await json("api/ratings");
+  const line = (name, c) => c ? `<h2>${name}</h2><div class="chips">${Object.entries(c).sort((a, b) => b[1] - a[1]).map(([k, n]) => `<span class="chip">${esc(k)} ${n}</span>`).join("")}</div>` : "";
+  $("#rateSum").innerHTML = line("このエージェントの発言", d.summary.bot) + line("人の発言", d.summary.human);
+  $("#ratings").innerHTML = d.items.map(r => `<li class="line"><span class="chip">${esc(r.label)}${r.detail ? `（${esc(r.detail)}）` : ""}</span>
+    <span class="mute">${esc(String(r.at).slice(5, 16).replace("T", " "))}・${esc(r.rater)}${r.version ? "・" + esc(r.version) : ""}</span>
+    <p>${esc(r.text)}</p>${r.comment ? `<p><b>→ ${esc(r.comment)}</b></p>` : ""}${r.state ? `<p class="mute">その時: ${esc(r.state)}</p>` : ""}
+    ${r.context?.length ? `<details><summary class="mute">前後の会話</summary><p class="mute">${r.context.map(esc).join("<br>")}</p></details>` : ""}</li>`).join("") || none("まだ無い");
+}
+
+// --- 情報 ---
+async function loadInfo() {
+  const d = await json("api/info");
+  $("#infoVer").textContent = `utsuwa ${d.version}${d.commit ? `（${d.commit}）` : ""}`;
+  $("#services").innerHTML = d.services.map(x => `<li class="line"><b>${esc(x.name)}</b> <span class="chip">${esc(x.state)}</span><p class="mute">${esc(x.since)}</p></li>`).join("");
+  $("#infoLinks").innerHTML = d.sections.map(x => `<h2>${esc(x.title)}</h2><ul class="rows">${x.items.map(i => `<li class="line"><a href="${esc(i.url)}" target="_blank" rel="noopener">${esc(i.name)}</a></li>`).join("")}</ul>`).join("");
+  $("#infoFacts").innerHTML = d.facts.map(([k, v]) => `<li class="line"><b>${esc(k)}</b><p>${esc(v)}</p></li>`).join("") || none("まだ無い");
+}
 
 // --- お知らせ ---
 function showNotes(obj) {

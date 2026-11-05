@@ -51,8 +51,14 @@ class Persona:
         trend は {"hist": [[時刻, 値]], "events": [{"at", "why", "delta"}], "band": ふつうの幅, "legend": 説明}、
         people は {"name", "lead", "empty", "items": [{"name", "tag", "value", "tone", "note", "events"}]} の並び、
         plot は {"name", "axes": [{"key", "name", "min", "max"}], "items": [{"name", "note", "learned", "active", "values"}],
-        "moved": [{"name", "at", "why", "changes"}]}。"""
-        return {"say": self.presence(t).label, "why": "", "meters": [], "trend": None, "people": [], "plot": None}
+        "moved": [{"name", "at", "why", "changes"}]}。
+        mechs は [{"name", "does", "now"}] の並び。now は状態から出す。"""
+        return {"say": self.presence(t).label, "why": "", "meters": [], "trend": None, "people": [], "plot": None,
+                "mechs": []}
+
+    def snapshot(self, t, target=None):
+        """返事を出した時の内部の値を1行で。評価と突き合わせるために残す。target は相手の id。"""
+        return self.presence(t).label
 
     async def slow(self, t):
         """1分ごとに呼ぶ。Jev に聞く、時間のかかる片付け用。"""

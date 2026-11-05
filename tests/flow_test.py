@@ -238,6 +238,24 @@ class FlowTest(unittest.TestCase):
         asyncio.run(go())
         self.assertEqual(a.compare.open, {})
 
+    def test_rating_a_compared_post_finds_the_shadow_reply(self):
+        a, s, clock, hi, rival, it = self._compare()
+
+        async def go():
+            await a.on_message(hi)
+            await a.deliver(it, ["俺も", "ねむい"], a.persona.presence(clock["t"]))
+            await a.rate({"message_id": "99", "channel": COMPARE, "is_me": True, "label": "キャラじゃない", "comment": "",
+                          "text": "-# [寝ろ](<https://d/2>)\n俺も\nねむい", "rater": "ポン酢",
+                          "at": clock["t"].isoformat(timespec="seconds"), "msg_at": clock["t"].isoformat(timespec="seconds")})
+        asyncio.run(go())
+        day = clock["t"].strftime("%Y-%m")
+        with open(a.vault.path(f"03 Logs/ratings/{day}.jsonl"), encoding="utf-8") as f:
+            rec = json.loads(f.readline())
+        self.assertEqual(rec["text"], "俺も\nねむい")                       # Minato の行は入れない
+        self.assertEqual(rec["source"], "reply")
+        self.assertTrue(rec["state"] and rec["version"])
+        self.assertTrue(any("ねむい" in x for x in rec["context"]))        # 元のチャンネルの会話
+
     def test_compare_when_the_rival_is_silent(self):
         a, s, clock, hi, _, it = self._compare()
 

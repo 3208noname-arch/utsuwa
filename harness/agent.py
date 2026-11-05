@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 
 import yaml
 
-from harness import context, night, writer
+from harness import __version__, context, night, writer
 from harness.api import choice, noul
 from harness.outbox import Intent, Outbox
 from harness.persona import Persona
@@ -313,6 +313,10 @@ class Agent:
             self.h.data["answered"] = self.outbox.answered
             self._count(it.target["author_id"], t)
         self.h.touch()
+        self.logs.said({"at": t.isoformat(timespec="seconds"), "channel": ch, "source": it.source,
+                        "target_id": it.target and str(it.target["id"]),
+                        "text": out if isinstance(out, str) else "\n".join(out), "version": __version__,
+                        "state": self.persona.snapshot(t, it.target and it.target.get("author_id"))})
         if mode == "shadow":
             where = self.config.get("compare_channel")
             head = f"（{it.target['author']}「{it.target['text'][:40]}」に）" if it.target else f"（{it.source}）"
@@ -524,8 +528,18 @@ class Agent:
     # --- 評価 ------------------------------------------------------------------------
     async def rate(self, rec):
         """評価を1件受ける。rec = {message_id, channel, text, is_me, label, comment, rater, at}。"""
-        around = self.logs.around(str(rec["channel"]), rec["message_id"], rec.get("msg_at") or rec["at"])
-        rec = {**rec, "context": [f"{m['author']}: {m['text']}" for m in around]}
+        at = rec.get("msg_at") or rec["at"]
+        channel, message_id, text = str(rec["channel"]), rec["message_id"], rec["text"]
+        compared = channel == str(self.config.get("compare_channel"))
+        if compared and text.startswith("-# ") and "\n" in text:    # 比べる用の投稿は、本番の Bot の行を除く
+            text = text.split("\n", 1)[1]
+        said = self.logs.find_said(text, at) if rec.get("is_me") else None
+        if said and compared and said.get("target_id"):            # 前後の会話は、元のチャンネルから引く
+            channel, message_id, at = said["channel"], said["target_id"], said["at"]
+        around = self.logs.around(channel, message_id, at)
+        rec = {**rec, "text": text, "context": [f"{m['author']}: {m['text']}" for m in around]}
+        if said:
+            rec.update(state=said.get("state"), version=said.get("version"), source=said.get("source"))
         self.logs.rating(rec)
         return await self.recorder.from_rating(rec, around)
 
