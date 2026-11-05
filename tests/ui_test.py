@@ -69,6 +69,49 @@ class UiTest(unittest.TestCase):
         self.assertEqual(got["rows"][0]["text"], "起きてる？")
         self.assertEqual(bad["rows"], [])
 
+    def test_notes_draft_then_post_only_once(self):
+        root = copy_template()
+        sent = []
+
+        async def fake_post(url, parts):
+            sent.append((url, parts))
+
+        async def go():
+            os.environ["NOTES_WEBHOOK"] = "http://hook"
+            ui.post_webhook, keep = fake_post, ui.post_webhook
+            try:
+                async with TestClient(TestServer(ui.app(root))) as c:
+                    r = await c.post("/api/notes", json={"text": "下書き"})
+                    nid = (await r.json())["items"][0]["id"]
+                    self.assertEqual((await c.put(f"/api/notes/{nid}", json={"text": "直した"})).status, 200)
+                    self.assertEqual((await c.post(f"/api/notes/{nid}/post")).status, 200)
+                    self.assertEqual((await c.post(f"/api/notes/{nid}/post")).status, 409)   # 二度は流さない
+                    self.assertEqual((await c.put(f"/api/notes/{nid}", json={"text": "後から"})).status, 409)
+                    return await (await c.get("/api/notes")).json()
+            finally:
+                ui.post_webhook = keep
+                del os.environ["NOTES_WEBHOOK"]
+        items = asyncio.run(go())["items"]
+        self.assertEqual(sent, [("http://hook", ["直した"])])
+        self.assertEqual((items[0]["status"], items[0]["text"]), ("posted", "直した"))
+
+    def test_notes_without_webhook_stays_draft(self):
+        root = copy_template()
+
+        async def go():
+            async with TestClient(TestServer(ui.app(root))) as c:
+                nid = (await (await c.post("/api/notes", json={"text": "x"})).json())["items"][0]["id"]
+                self.assertEqual((await c.post(f"/api/notes/{nid}/post")).status, 503)
+                return await (await c.get("/api/notes")).json()
+        self.assertEqual(asyncio.run(go())["items"][0]["status"], "draft")
+
+    def test_notes_split_at_line_end(self):
+        text = chr(10).join(["あ" * 900] * 3)
+        parts = ui.split_note(text)
+        self.assertEqual(len(parts), 2)
+        self.assertTrue(all(len(x) <= 2000 for x in parts))
+        self.assertEqual("".join(parts), text)
+
     def test_unit_name_is_escaped(self):
         self.assertEqual(ui.unit_name("/x/ナギ"), r"utsuwa@\xe3\x83\x8a\xe3\x82\xae.service")
 

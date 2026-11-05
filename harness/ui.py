@@ -13,6 +13,7 @@ import re
 import time
 from datetime import datetime
 
+import aiohttp
 import yaml
 from aiohttp import web
 
@@ -22,6 +23,8 @@ from harness.vault import Vault
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 CHAT_MAX, LOG_MAX = 400, 1000
+NOTES = "03 Logs/notes.json"   # お知らせの下書きと流した記録。書くのは UI だけ
+NOTE_MAX = 2000                # Discord の1メッセージの上限
 
 
 def unit_name(root):
@@ -89,7 +92,96 @@ def add_request(root, body):
     return None
 
 
+def split_note(text):
+    """2000字を超えたら、行の切れ目で分ける。"""
+    out, cur = [], ""
+    for line in text.splitlines(keepends=True):
+        if len(cur) + len(line) > NOTE_MAX:
+            out.append(cur)
+            cur = ""
+        cur += line
+    return out + [cur] if cur.strip() else out
+
+
+async def post_webhook(url, parts):
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as s:
+        for part in parts:
+            r = await s.post(url, json={"content": part, "allowed_mentions": {"parse": []}})
+            r.raise_for_status()
+
+
 def app(root):
+    vault = Vault(root)
+    lock = asyncio.Lock()
+
+    def notes():
+        return vault.json(NOTES, {"items": []})
+
+    def find(obj, req):
+        x = next((n for n in obj["items"] if str(n["id"]) == req.match_info["id"]), None)
+        if not x:
+            raise web.HTTPNotFound(text="下書きが無い")
+        if x["status"] != "draft":
+            raise web.HTTPConflict(text="もう流した")
+        return x
+
+    async def note_text(req):
+        if req.content_type != "application/json":      # 別のページからのフォーム送信を受けない
+            raise web.HTTPUnsupportedMediaType()
+        try:
+            body = await req.json()
+        except ValueError:
+            body = None
+        text = body.get("text") if isinstance(body, dict) else None
+        if not isinstance(text, str) or not text.strip():
+            raise web.HTTPBadRequest(text="本文が空")
+        return text.strip()
+
+    async def notes_get(_):
+        return web.json_response(notes())
+
+    async def notes_new(req):
+        text = await note_text(req)
+        async with lock:
+            obj = notes()
+            obj["items"].insert(0, {"id": max((n["id"] for n in obj["items"]), default=0) + 1, "text": text,
+                                    "status": "draft", "at": datetime.now().isoformat(timespec="minutes")})
+            vault.write_json(NOTES, obj)
+            return web.json_response(obj)
+
+    async def notes_put(req):
+        text = await note_text(req)
+        async with lock:
+            obj = notes()
+            find(obj, req)["text"] = text
+            vault.write_json(NOTES, obj)
+            return web.json_response(obj)
+
+    async def notes_delete(req):
+        async with lock:
+            obj = notes()
+            obj["items"].remove(find(obj, req))
+            vault.write_json(NOTES, obj)
+            return web.json_response(obj)
+
+    async def notes_post(req):
+        """Webhook に流す。同じ下書きを二度流さない（連打しても1回）。"""
+        if req.content_type == "application/x-www-form-urlencoded":   # 別のページからのフォーム送信を受けない
+            raise web.HTTPUnsupportedMediaType()
+        url = os.environ.get("NOTES_WEBHOOK")
+        async with lock:
+            obj = notes()
+            x = find(obj, req)
+            if not url:
+                raise web.HTTPServiceUnavailable(text=".env に NOTES_WEBHOOK が無い")
+            try:
+                await post_webhook(url, split_note(x["text"]))
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                raise web.HTTPBadGateway(text=f"流せなかった: {type(e).__name__}")
+            x.update(status="posted", posted_at=datetime.now().isoformat(timespec="minutes"))
+            vault.write_json(NOTES, obj)
+            return web.json_response(obj)
+
     async def page(_):
         return web.FileResponse(os.path.join(HERE, "ui.html"))
 
@@ -121,7 +213,9 @@ def app(root):
 
     a = web.Application()
     a.add_routes([web.get("/", page), web.get("/api/state", state), web.get("/api/chat", chat), web.get("/api/log", log),
-                  web.post("/api/plot", plot)])
+                  web.post("/api/plot", plot), web.get("/api/notes", notes_get), web.post("/api/notes", notes_new),
+                  web.put("/api/notes/{id}", notes_put), web.delete("/api/notes/{id}", notes_delete),
+                  web.post("/api/notes/{id}/post", notes_post)])
     return a
 
 

@@ -96,6 +96,10 @@ details.person .rows{border-top:0;margin:0 0 10px 10px}
 pre.log{white-space:pre-wrap;word-break:break-all;font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;margin:0;max-height:70vh;overflow:auto;
   background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px}
 
+.note{margin:0 0 14px}
+.note textarea{width:100%;min-height:220px;box-sizing:border-box;background:var(--surface);color:var(--ink);border:1px solid var(--line);
+  border-radius:12px;padding:12px;font:inherit;resize:vertical}
+.note .tools{margin:8px 0 0}
 .plotbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}
 .plotbar label{color:var(--mute);font-size:13px;display:flex;align-items:center;gap:4px}
 .plotbar select{min-height:38px;padding:4px 8px}
@@ -166,6 +170,15 @@ details.sleep>summary{cursor:pointer;color:var(--mute);padding:8px 2px}
   <h2>最近動いた話題</h2><ul class="rows" id="plotMoved"></ul>
 </section>
 
+<section class="view" id="v-notes">
+  <h2>下書き</h2>
+  <div id="noteDrafts"></div>
+  <button class="btn" id="noteNew" type="button">下書きを足す</button>
+  <p id="noteMsg" role="status"></p>
+  <h2>流したもの</h2>
+  <ul class="rows" id="notePosted"></ul>
+</section>
+
 <section class="view" id="v-log">
   <div class="subs" role="tablist" aria-label="ログの種類">
     <button class="sub" type="button" role="tab" data-log="chat">会話</button>
@@ -202,6 +215,7 @@ const TABS = [
   ["now", "いま", '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>'],
   ["people", "人", '<svg viewBox="0 0 24 24"><circle cx="9" cy="9" r="3.2"/><path d="M3.5 19c.8-3 3-4.6 5.5-4.6s4.7 1.6 5.5 4.6"/><circle cx="17" cy="8" r="2.4"/><path d="M16 13.6c2.2.2 3.8 1.6 4.5 4"/></svg>'],
   ["plot", "話題", '<svg viewBox="0 0 24 24"><path d="M4 4v16h16"/><circle cx="10" cy="14" r="1.6"/><circle cx="15" cy="8" r="1.6"/><circle cx="18" cy="14" r="1.6"/></svg>'],
+  ["notes", "お知らせ", '<svg viewBox="0 0 24 24"><path d="M4 10v4h3l7 4V6l-7 4z"/><path d="M17 9.5a3.5 3.5 0 0 1 0 5"/></svg>'],
   ["log", "ログ", '<svg viewBox="0 0 24 24"><path d="M7 4h10v16H7z"/><path d="M10 8h4M10 12h4M10 16h2"/></svg>'],
 ];
 let cur = {tab: "now", log: "chat", dim: 2, x: null, y: null, z: null};
@@ -220,6 +234,7 @@ function render() {
   if (cur.tab === "now") drawTrend();
   if (cur.tab === "plot") drawPlot();
   if (cur.tab === "log") cur.log === "chat" ? loadChat() : loadRun();
+  if (cur.tab === "notes") loadNotes();
   try { localStorage.setItem("utsuwa-ui", JSON.stringify(cur)); } catch {}
 }
 document.addEventListener("click", e => {
@@ -515,6 +530,34 @@ $("#day").addEventListener("change", e => loadChat(e.target.value));
 $("#chatFilter").addEventListener("input", showChat);
 $("#runFilter").addEventListener("input", showRun);
 $("#reload").addEventListener("click", loadRun);
+
+// --- お知らせ ---
+function showNotes(obj) {
+  const drafts = obj.items.filter(x => x.status === "draft"), posted = obj.items.filter(x => x.status !== "draft");
+  $("#noteDrafts").innerHTML = drafts.map(x => `<div class="note" data-note="${x.id}">
+    <textarea aria-label="下書きの本文">${esc(x.text)}</textarea>
+    <div class="tools"><button class="btn" data-act="save" type="button">保存</button>
+    <button class="btn" data-act="post" type="button">流す</button>
+    <button class="btn" data-act="del" type="button">消す</button></div></div>`).join("");
+  $("#notePosted").innerHTML = posted.map(x => `<li><b>${esc(String(x.posted_at).slice(5, 16).replace("T", " "))}</b> ${esc(x.text.slice(0, 80))}</li>`).join("") || none("まだ無い");
+}
+async function loadNotes() { showNotes(await json("api/notes")); }
+async function noteCall(url, method, body) {
+  const r = await fetch(url, {method, headers: body ? {"Content-Type": "application/json"} : {}, body: body && JSON.stringify(body)});
+  if (!r.ok) { $("#noteMsg").textContent = await r.text(); return false; }
+  $("#noteMsg").textContent = "";
+  showNotes(await r.json());
+  return true;
+}
+$("#noteNew").addEventListener("click", () => noteCall("api/notes", "POST", {text: "（ここに本文）"}));
+$("#v-notes").addEventListener("click", async e => {
+  const b = e.target.closest("[data-act]"); if (!b) return;
+  const box = b.closest("[data-note]"), id = box.dataset.note, text = box.querySelector("textarea").value;
+  if (b.dataset.act === "save" && await noteCall(`api/notes/${id}`, "PUT", {text})) $("#noteMsg").textContent = "保存した";
+  if (b.dataset.act === "del" && confirm("この下書きを消しますか")) noteCall(`api/notes/${id}`, "DELETE");
+  if (b.dataset.act === "post" && confirm("Discord に流しますか") && await noteCall(`api/notes/${id}`, "PUT", {text})
+      && await noteCall(`api/notes/${id}/post`, "POST")) $("#noteMsg").textContent = "流した";
+});
 
 render();
 loadState();
