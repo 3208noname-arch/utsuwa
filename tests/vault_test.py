@@ -44,6 +44,12 @@ class VaultTest(unittest.TestCase):
         self.assertIn("01 Lessons/03 その他/その他_Temp.md", got)
         self.assertEqual(self.v.changes(), [])
 
+    def test_changes_ignores_own_writes(self):
+        self.v.changes()
+        self.v.write_text("01 Lessons/01 常識/自分で書いた.md", "x")
+        self.v.write_json("02 State/x.json", {})
+        self.assertEqual(self.v.changes(), [])
+
     def test_cannot_write_agents(self):
         with self.assertRaises(NotWritable):
             self.v.write_text("Agents/SOUL.md", "x")

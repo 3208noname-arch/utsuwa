@@ -150,6 +150,8 @@ class Vault:
         with open(tmp, "w", encoding="utf-8", newline="\n") as f:
             f.write(text)
         os.replace(tmp, p)
+        if self._seen is not None and p.endswith(WATCH_EXT):    # 自分の書き込みは「書き換わった」に数えない
+            self._seen[rel.replace(os.sep, "/")] = _stamp(p)
 
     def write_note(self, rel, meta, body):
         """新しいノートを作る。**同じ名前があれば書かずに False。**"""
