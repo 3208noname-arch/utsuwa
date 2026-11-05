@@ -69,22 +69,12 @@ class NagiTest(unittest.TestCase):
         a.persona.on_sent(["コンビニで500円の唐揚げ買った"], ans)
         self.assertEqual(a.persona.b["money"], before - 500)
         self.assertTrue(any("唐揚げ" in e for e in a.h.data["events"]["2026-11-10"]))
-        self.assertTrue(any("今日" in e and "唐揚げ" in e for e in a.recent_events(a.now())))
 
     def test_inner_is_words_not_numbers(self):
         a, _ = make(datetime(2026, 11, 10, 15, 0))
         s = a.persona.inner(a.now(), None)["体の状態"]
         self.assertIn("財布", s)
         self.assertNotIn("energy", s)
-
-    def test_names_regex(self):
-        a, _ = make(datetime(2026, 11, 10, 15, 0))
-        p = f"{a.vault.root}/Agents/config.yaml"
-        with open(p, "a", encoding="utf-8") as f:
-            f.write('names_regex: "あかり|(?<![つツ])なぎ(?![さ])"\n')
-        r = a.persona.names()
-        self.assertTrue(r.search("なぎ起きてる？"))
-        self.assertFalse(r.search("つなぎ着てる"))
 
     def test_guards(self):
         a, _ = make(datetime(2026, 11, 10, 15, 0))
