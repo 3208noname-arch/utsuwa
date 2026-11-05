@@ -81,3 +81,49 @@ class UiTest(unittest.TestCase):
         a.persona.tick(t.replace(minute=5))
         a.persona.tick(t.replace(minute=11))
         self.assertEqual(len(a.persona.mem.data["mood_hist"]), 2)
+
+    def test_plot_request_is_checked_then_taken_by_the_bot(self):
+        root = copy_template()
+        as_nagi(root)
+        os.makedirs(f"{root}/02 State", exist_ok=True)
+        with open(f"{root}/02 State/topics.json", "w", encoding="utf-8") as f:
+            json.dump({"topics": [{"name": "虫", "valence": -0.8, "arousal": 0.9, "note": "",
+                                   "anchor": {"valence": -0.8, "arousal": 0.9}}]}, f, ensure_ascii=False)
+
+        async def go():
+            async with TestClient(TestServer(ui.app(root))) as c:
+                out = [(await c.post("/api/plot", json={"name": "虫", "key": "valence", "value": v})).status for v in (-0.2, 3)]
+                out.append((await c.post("/api/plot", json={"name": "無い", "key": "valence", "value": 0})).status)
+                out.append((await c.post("/api/plot", data="x", headers={"Content-Type": "text/plain"})).status)
+                return out
+        self.assertEqual(asyncio.run(go()), [200, 400, 400, 415])
+        a = Agent(Vault(root), None, None, None)
+        a.take_requests(datetime(2026, 11, 9, 20, 0))
+        tp = a.persona.topic_list[0]
+        self.assertEqual(tp["valence"], -0.2)
+        self.assertEqual(tp["anchor"]["valence"], -0.2)
+        self.assertEqual(tp["moved"][0]["changes"], {"valence": [-0.8, -0.2]})
+        self.assertEqual(os.listdir(f"{root}/02 State/requests"), [])
+        saved = json.load(open(f"{root}/02 State/topics.json", encoding="utf-8"))
+        self.assertEqual(saved["topics"][0]["valence"], -0.2)
+
+    def test_broken_request_is_dropped(self):
+        root = copy_template()
+        as_nagi(root)
+        os.makedirs(f"{root}/02 State/requests", exist_ok=True)
+        with open(f"{root}/02 State/requests/1.json", "w", encoding="utf-8") as f:
+            f.write("壊れている")
+        Agent(Vault(root), None, None, None).take_requests(datetime(2026, 11, 9, 20, 0))
+        self.assertEqual(os.listdir(f"{root}/02 State/requests"), [])
+
+    def test_plot_separates_sleeping_topics(self):
+        root = copy_template()
+        as_nagi(root)
+        os.makedirs(f"{root}/02 State", exist_ok=True)
+        learned = [{"name": f"覚えた{i}", "valence": 0, "arousal": 0.5, "note": "", "source": "learned",
+                    "at": f"2026-11-{i + 1:02d}T00:00:00"} for i in range(12)]
+        with open(f"{root}/02 State/topics.json", "w", encoding="utf-8") as f:
+            json.dump({"topics": learned}, f, ensure_ascii=False)
+        plot = fetch(root, "/api/state")[0]["view"]["plot"]
+        asleep = [x["name"] for x in plot["items"] if not x["active"]]
+        self.assertEqual(sorted(asleep), ["覚えた0", "覚えた1"])

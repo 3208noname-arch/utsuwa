@@ -52,4 +52,20 @@ for _ in range(20):
 ok(k["valence"] == -0.5 and k["arousal"] == 0.3 and "anchor" not in k, "覚えた話題は錨なしで動く")
 ok(P.experience({"name": "x", "valence": 0, "arousal": 0.5, "source": "learned"}, True, 1) == (0, 0.03),
    "気分の動きが小さければ快は動かさない")
+AX = {"key": "guard", "name": "x", "min": 0, "max": 1, "question": "q"}
+ok(P.value({}, AX) == 0.5, "値が無ければ範囲の中央")
+ok(P.clip(AX, 3) == 1 and P.clip(AX, -1) == 0, "範囲に収める")
+ok(P.unfilled([{"guard": 1}, {"name": "a"}], [AX, {"key": "v"}], 5) == [({"name": "a"}, [AX])], "問いのある軸の空きだけ")
+h = {"name": "虫", "guard": 0.2, "anchor": {"guard": 0.2}}
+P.put(h, AX, 0.7, "2026-11-05T17:00:00")
+ok(h["guard"] == 0.7 and h["anchor"]["guard"] == 0.7, "人が置いたら錨も動く")
+ok(h["moved"][0]["changes"] == {"guard": [0.2, 0.7]}, "動いた記録が残る")
+for i in range(P.MOVED_KEEP + 2):
+    P.put(h, AX, i / 10, "x")
+ok(len(h["moved"]) == P.MOVED_KEEP, "記録は上限まで")
+P.track(h, {"guard": h["guard"]}, "x", "動いていない")
+ok(h["moved"][-1]["why"] != "動いていない", "動いていなければ残さない")
+ok(P.as_cautions([{"name": "推し", "guard": 0.9}, {"name": "虫", "guard": 0.9}], "推しの話") == "推しは掘られると照れる、はぐらかしたい",
+   "名前が出た話題だけ")
+ok(P.as_cautions([{"name": "推し"}], "推し") == "", "値が無ければ何も言わない")
 print(f"ok {n}")

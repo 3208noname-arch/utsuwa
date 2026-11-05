@@ -393,6 +393,8 @@ class Agent:
             if note:
                 for ch in self.live_channels():
                     self.offer(Intent("announce", ch, "short", t, note=note))
+        self.take_requests(t)
+        await self.persona.slow(t)
         self.release_deferred(t)
         for ch in self.live_channels():
             self.pickup(ch, t)
@@ -407,6 +409,18 @@ class Agent:
             except Exception:
                 log.exception("夜の整理に失敗")
         self.flush(t)
+
+    def take_requests(self, t):
+        """Web UI の変更依頼を受ける。受けたらすぐファイルへ書く（UI はファイルを読むので）。"""
+        rels = self.vault.names("02 State/requests", ".json")
+        for rel in rels:
+            try:
+                self.persona.on_request(self.vault.json(rel), t)
+            except Exception:
+                log.exception("依頼に失敗: %s", rel)
+            self.vault.remove(rel)
+        if rels:
+            self.flush(t, force=True)
 
     def flush(self, t, force=False):
         for s in self._states.values():

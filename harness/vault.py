@@ -113,6 +113,13 @@ class Vault:
                         out.append((rel, n))
         return out
 
+    def names(self, sub, ext):
+        """sub の直下の、ext で終わるファイルの相対パス（古い順に並ぶ名前を付けて使う）。"""
+        try:
+            return [f"{sub}/{x}" for x in sorted(os.listdir(self.path(sub))) if x.endswith(ext)]
+        except FileNotFoundError:
+            return []
+
     def json(self, rel, default=None):
         v = self.load(rel, json.loads)
         return default if v is None else v
@@ -152,6 +159,12 @@ class Vault:
         os.replace(tmp, p)
         if self._seen is not None and p.endswith(WATCH_EXT):    # 自分の書き込みは「書き換わった」に数えない
             self._seen[rel.replace(os.sep, "/")] = _stamp(p)
+
+    def remove(self, rel):
+        try:
+            os.remove(self._check_writable(rel))
+        except FileNotFoundError:
+            pass
 
     def write_note(self, rel, meta, body):
         """新しいノートを作る。**同じ名前があれば書かずに False。**"""

@@ -9,7 +9,7 @@ from harness.agent import Agent
 from harness.vault import Vault
 from personas.nagi import rules
 from personas.nagi.engine import anger, decide
-from tests.fakes import FakeJev, FakeLLM, FakeSender, copy_template
+from tests.fakes import FakeJev, FakeLLM, FakeSender, copy_template, msg
 
 
 def make(t):
@@ -57,6 +57,34 @@ class NagiTest(unittest.TestCase):
         ex = yaml.safe_load(open("personas/nagi/config.example.yaml", encoding="utf-8"))
         self.assertEqual(ex["rules"], rules.current())
         self.assertEqual(rules.apply(ex["rules"]), [])
+
+    def test_unfilled_axes_are_asked_to_jev(self):
+        a, clock = make(datetime(2026, 11, 10, 15, 0))
+        a.persona.topics_state.data["topics"] = [{"name": "虫", "valence": -0.8, "arousal": 0.9, "note": ""},
+                                                 {"name": "電話", "valence": -0.5, "arousal": 0.4, "note": ""}]
+        a.vault.load = lambda rel, parse, real=a.vault.load: (
+            {"topic_axes": [{"key": "valence", "name": "x", "min": -1, "max": 1},
+                            {"key": "guard", "name": "y", "min": 0, "max": 1, "question": "q"}]}
+            if rel == "Agents/config.yaml" else real(rel, parse))
+        a.jev.rule = lambda s, n, q: None
+        asyncio.run(a.persona.slow(a.now()))
+        self.assertNotIn("guard", a.persona.topic_list[0])        # Jev が棄権したら空のまま、次の分にまた聞く
+        a.jev.rule = lambda s, n, q: 0.75 if "虫" in s else None
+        asyncio.run(a.persona.slow(a.now()))
+        self.assertEqual(a.persona.topic_list[0]["guard"], 0.75)
+        self.assertNotIn("guard", a.persona.topic_list[1])
+        self.assertEqual(len(a.jev.calls[-1][1]), 1)
+
+    def test_cautions_reach_the_writer_only_when_named(self):
+        a, _ = make(datetime(2026, 11, 10, 15, 0))
+        a.persona.topics_state.data["topics"] = [{"name": "推し", "valence": 0.7, "arousal": 0.8, "guard": 0.85, "know": 0.5},
+                                                 {"name": "政治", "valence": -0.1, "arousal": 0.1, "guard": 0.1, "know": 0.2},
+                                                 {"name": "虫", "valence": -0.8, "arousal": 0.9, "guard": 0.9, "know": 0.2}]
+        a.conv("c").add(msg("1", "c", "ミナ", "推しの話しよ", a.now()))
+        words = a.persona.inner(a.now(), {"channel": "c", "author_id": "u"})["自分の好き嫌い"]
+        self.assertIn("推しは掘られると照れる", words)
+        self.assertNotIn("虫は", words)
+        self.assertNotIn("政治は語れるほど", words)
 
     def test_tick_moves_body_and_sent_reply_spends(self):
         a, clock = make(datetime(2026, 11, 10, 15, 0))  # 火曜（予定なし）

@@ -27,6 +27,7 @@ from personas.nagi.rules import apply as apply_rules
 log = logging.getLogger("utsuwa")
 
 MOOD_EVERY, MOOD_KEEP = timedelta(minutes=10), timedelta(hours=48)
+AXES_PER_MINUTE = 3       # 値の無い軸を Jev に聞く、1分あたりの話題の数
 DOING = {"寝ている": "寝てる", "起きたて": "起きたて", "講義中": "講義中", "バイト中": "バイト中", "離席中": "席を外してる",
          "深夜": "夜ふかし中", "ふつう": "起きてる"}
 ANNOUNCE = {"寝た": "眠気が限界なので、今から寝る。会話から抜ける一言だけ",
@@ -96,6 +97,10 @@ class Nagi(Persona):
         return self.mood_state.data
 
     @property
+    def axes(self):
+        return self.agent.config.get("topic_axes") or topics.AXES
+
+    @property
     def who(self):
         c = self.agent.config
         return f"{c.get('name', 'ナギ')}（{c.get('nick', 'N4Gi')}）"
@@ -161,7 +166,17 @@ class Nagi(Persona):
             "trend": {"hist": self.mem.data.get("mood_hist", []), "events": list(reversed(m["events"])), "band": 14,
                       "legend": "直近24時間の快・不快。上が快、下が不快。薄い帯が「ふつう」の範囲。点は気分を動かした出来事"},
             "people": [self.view_likes(t), self.view_anger(t), self.view_names()],
+            "plot": self.view_plot(),
         }
+
+    def view_plot(self):
+        active = {id(x) for x in topics.active(self.topic_list, "")}
+        axes = [{k: a[k] for k in ("key", "name", "min", "max")} for a in self.axes]
+        items = [{"name": x["name"], "note": x.get("note", ""), "learned": x.get("source") == "learned",
+                  "active": id(x) in active, "values": {a["key"]: topics.value(x, a) for a in axes}} for x in self.topic_list]
+        moved = sorted(({"name": x["name"], **m} for x in self.topic_list for m in x.get("moved", [])),
+                       key=lambda m: m["at"], reverse=True)
+        return {"name": "話題", "axes": axes, "items": items, "moved": moved[:30]}
 
     def view_likes(self, t):
         items = [{"name": p.get("display"), "tag": affinity.band(p.get("v", 0)), "value": f"{p.get('v', 0):+.1f}",
@@ -239,7 +254,9 @@ class Nagi(Persona):
         for e in done:
             tp = next((x for x in self.topic_list if x["name"] == e["name"]), None)
             if tp:
+                before = {k: tp[k] for k in ("valence", "arousal")}
                 topics.experience(tp, e["joined"], self.people_felt(datetime.fromisoformat(e["at"]), topics.EPISODE_MIN))
+                topics.track(tp, before, t.isoformat(timespec="seconds"), "話題が出た後の経験")
         self.topics_state.touch()
 
     # --- 混ざり方を居心地の予想で選ぶ -------------------------------------------------------
@@ -310,8 +327,9 @@ class Nagi(Persona):
              "気分": mood.as_words(self.m, self.mood_settle(t))}
         convo = "\n".join(x["text"] for x in list(self.agent.conv(target["channel"]).recent)[-6:]) if target else ""
         taste = topics.as_words(topics.active(self.topic_list, convo))
+        cautions = topics.as_cautions(self.topic_list, convo)
         if taste:
-            s["自分の好き嫌い"] = taste
+            s["自分の好き嫌い"] = taste + (f"／{cautions}" if cautions else "")
         if target:
             v = self.anger_of(target["author_id"])
             if v:
@@ -472,8 +490,34 @@ class Nagi(Persona):
         like, dislike = a.get("like", 0), a.get("dislike", 0)
         topic = a.get("topic", ("なし",))[0]
         if topic != "なし" and max(like, dislike) >= decide.INTEREST_TRUE:
-            topics.learn(self.topic_list, topic, round(like - dislike, 2), t.isoformat(timespec="seconds"))
+            at = t.isoformat(timespec="seconds")
+            tp = next((x for x in self.topic_list if x["name"].casefold() == str(topic).casefold()), None)
+            before = {"valence": tp["valence"]} if tp else {}
+            topics.learn(self.topic_list, topic, round(like - dislike, 2), at)
+            if tp:
+                topics.track(tp, before, at, "会話で言った")
             self.topics_state.touch()
+
+    async def slow(self, t):
+        """問いのある軸で、値がまだ無い話題を Jev に聞いて埋める。失敗したら次の分にまた聞く。"""
+        todo = topics.unfilled(self.topic_list, self.axes, AXES_PER_MINUTE)
+        if todo:
+            soul = self.agent.vault.text("Agents/SOUL.md")
+        for tp, axes in todo:
+            state = f"【人物】\n{soul}\n\n【話題】{tp['name']}\n【補足】{tp.get('note') or 'なし'}"
+            a = await self.agent.jev.ask(state, {x["key"]: noul(x["question"]) for x in axes})
+            for x in axes:
+                if x["key"] in a:
+                    tp[x["key"]] = topics.clip(x, x["min"] + a[x["key"]] * (x["max"] - x["min"]))
+                    self.topics_state.touch()
+
+    def on_request(self, req, t):
+        tp = next((x for x in self.topic_list if x["name"] == req.get("name")), None)
+        axis = next((x for x in self.axes if x["key"] == req.get("key")), None)
+        if req.get("kind") != "plot" or not tp or not axis:
+            return super().on_request(req, t)
+        topics.put(tp, axis, req["value"], t.isoformat(timespec="seconds"))
+        self.topics_state.touch()
 
 
 PERSONA = Nagi

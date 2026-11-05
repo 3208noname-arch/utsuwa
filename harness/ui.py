@@ -1,7 +1,7 @@
 """エージェントの様子を見る Web UI: python -m harness.ui <エージェントのフォルダ> [--env .env]
 
 - Bot とは別のプロセスで動かす。UI が落ちても Bot は止まらない
-- フォルダは読むだけ（Bot が状態を持っているので、ここから書くと上書きで消える）
+- 状態は読むだけ（Bot がメモリに持っているので、直接書くと上書きで消える）。直す時は 02 State/requests/ に依頼を置く
 - 認証は無い。外から届かないアドレスで待ち受ける（.env の UI_HOST、UI_PORT）
 """
 import argparse
@@ -10,6 +10,7 @@ import glob
 import json
 import os
 import re
+import time
 from datetime import datetime
 
 import yaml
@@ -71,6 +72,23 @@ def read_chat(root, day):
                       "shadow": str(r.get("channel")) in shadow} for r in reversed(rows[-CHAT_MAX:])]}
 
 
+def add_request(root, body):
+    """値の変更依頼を置く。Bot が次の分に受け取る。おかしければ理由の文字列を返す。"""
+    agent = Agent(Vault(root), None, None, None)
+    plot = agent.persona.view(agent.now()).get("plot")
+    if not plot or not isinstance(body, dict):
+        return "依頼を受けられない"
+    axis = next((a for a in plot["axes"] if a["key"] == body.get("key")), None)
+    if not axis or not any(x["name"] == body.get("name") for x in plot["items"]):
+        return "話題か軸が無い"
+    v = body.get("value")
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or not axis["min"] <= v <= axis["max"]:
+        return "値が範囲の外"
+    agent.vault.write_json(f"02 State/requests/{time.time_ns()}.json",
+                           {"kind": "plot", "name": body["name"], "key": body["key"], "value": v})
+    return None
+
+
 def app(root):
     async def page(_):
         return web.FileResponse(os.path.join(HERE, "ui.html"))
@@ -89,8 +107,21 @@ def app(root):
         out = await run("journalctl", "-u", unit_name(root), "-n", str(n), "--no-pager", "-o", "short-iso")
         return web.json_response({"lines": (out or "").splitlines()})
 
+    async def plot(req):
+        if req.content_type != "application/json":      # 別のページからのフォーム送信を受けない
+            raise web.HTTPUnsupportedMediaType()
+        try:
+            body = await req.json()
+        except ValueError:
+            body = None
+        why = await asyncio.to_thread(add_request, root, body)
+        if why:
+            raise web.HTTPBadRequest(text=why)
+        return web.json_response({"ok": True})
+
     a = web.Application()
-    a.add_routes([web.get("/", page), web.get("/api/state", state), web.get("/api/chat", chat), web.get("/api/log", log)])
+    a.add_routes([web.get("/", page), web.get("/api/state", state), web.get("/api/chat", chat), web.get("/api/log", log),
+                  web.post("/api/plot", plot)])
     return a
 
 

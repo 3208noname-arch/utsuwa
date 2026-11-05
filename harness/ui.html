@@ -95,6 +95,32 @@ details.person .rows{border-top:0;margin:0 0 10px 10px}
 .btn{border:1px solid var(--acc);background:transparent;color:var(--acc);border-radius:10px;padding:8px 16px;min-height:42px;cursor:pointer;font-weight:700}
 pre.log{white-space:pre-wrap;word-break:break-all;font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;margin:0;max-height:70vh;overflow:auto;
   background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px}
+
+.plotbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:0 0 10px}
+.plotbar label{color:var(--mute);font-size:13px;display:flex;align-items:center;gap:4px}
+.plotbar select{min-height:38px;padding:4px 8px}
+.seg{display:flex;border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.seg button{border:0;background:var(--surface);padding:6px 14px;min-height:38px;cursor:pointer}
+.seg button[aria-pressed=true]{background:var(--ink);color:var(--bg)}
+.plot{display:block;width:100%;background:var(--surface);border:1px solid var(--line);border-radius:12px}
+.plot.spin{touch-action:none;cursor:grab}
+.plot text{fill:var(--mute);font-size:12px}
+.plot .pt{cursor:grab;touch-action:none}
+.plot .pt text{fill:var(--ink)}
+.plot .learned circle.dot{fill:var(--warn)}
+.plot circle.dot{fill:var(--acc)}
+.plot .on circle.dot{stroke:var(--ink);stroke-width:2}
+.status{color:var(--warn);font-size:13px;min-height:1.65em;margin:6px 2px}
+details.topic{border-bottom:1px solid var(--line)}
+details.topic summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:1fr auto;gap:12px;padding:11px 2px;align-items:baseline}
+details.topic summary::-webkit-details-marker{display:none}
+.axis{display:grid;grid-template-columns:7.5em 1fr 3.2em;gap:8px;align-items:center;min-height:40px}
+.axis input{width:100%;accent-color:var(--acc);min-height:32px}
+.axis .num{text-align:right;font-weight:700}
+.topic-body{padding:0 2px 12px}
+.topic-body .note{color:var(--mute);font-size:13px;margin:0 0 6px}
+details.sleep{margin-top:16px}
+details.sleep>summary{cursor:pointer;color:var(--mute);padding:8px 2px}
 </style>
 </head>
 <body>
@@ -121,6 +147,24 @@ pre.log{white-space:pre-wrap;word-break:break-all;font:12px/1.55 ui-monospace,Me
 </section>
 
 <section class="view" id="v-people"><div id="people"></div></section>
+
+<section class="view" id="v-plot">
+  <div class="plotbar">
+    <div class="seg" role="group" aria-label="図の形">
+      <button type="button" data-dim="2">平面</button><button type="button" data-dim="3">立体</button>
+    </div>
+    <label>横<select id="axX"></select></label>
+    <label>縦<select id="axY"></select></label>
+    <label id="axZBox">奥<select id="axZ"></select></label>
+  </div>
+  <svg class="plot" id="plot" role="img" aria-label="話題の位置の図"></svg>
+  <p class="status" id="plotMsg" role="status"></p>
+  <h2>使っている話題</h2>
+  <p class="lead">名前を押すと全部の軸が出る。動かすと次の1分で Bot に届く。</p>
+  <div class="person-list" id="topics"></div>
+  <details class="sleep" id="sleepBox"><summary id="sleepSum"></summary><div class="person-list" id="sleeping"></div></details>
+  <h2>最近動いた話題</h2><ul class="rows" id="plotMoved"></ul>
+</section>
 
 <section class="view" id="v-log">
   <div class="subs" role="tablist" aria-label="ログの種類">
@@ -157,20 +201,24 @@ const json = async url => { const r = await fetch(url); if (!r.ok) throw new Err
 const TABS = [
   ["now", "いま", '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>'],
   ["people", "人", '<svg viewBox="0 0 24 24"><circle cx="9" cy="9" r="3.2"/><path d="M3.5 19c.8-3 3-4.6 5.5-4.6s4.7 1.6 5.5 4.6"/><circle cx="17" cy="8" r="2.4"/><path d="M16 13.6c2.2.2 3.8 1.6 4.5 4"/></svg>'],
+  ["plot", "話題", '<svg viewBox="0 0 24 24"><path d="M4 4v16h16"/><circle cx="10" cy="14" r="1.6"/><circle cx="15" cy="8" r="1.6"/><circle cx="18" cy="14" r="1.6"/></svg>'],
   ["log", "ログ", '<svg viewBox="0 0 24 24"><path d="M7 4h10v16H7z"/><path d="M10 8h4M10 12h4M10 16h2"/></svg>'],
 ];
-let cur = {tab: "now", log: "chat"};
+let cur = {tab: "now", log: "chat", dim: 2, x: null, y: null, z: null};
 try { cur = {...cur, ...JSON.parse(localStorage.getItem("utsuwa-ui") || "{}")}; } catch {}
 if (!TABS.some(x => x[0] === cur.tab)) cur.tab = "now";
 
 function render() {
   const btn = ([id, name, icon]) => `<button class="grp" type="button" data-tab="${id}" aria-selected="${id === cur.tab}">${icon}<span>${name}</span></button>`;
-  $("#tabs").innerHTML = $("#tabsTop").innerHTML = TABS.map(btn).join("");
+  const tabs = TABS.filter(x => x[0] !== "plot" || plot);
+  $("#tabs").innerHTML = $("#tabsTop").innerHTML = tabs.map(btn).join("");
+  $("#tabs").style.gridTemplateColumns = `repeat(${tabs.length},1fr)`;
   document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + cur.tab));
   document.querySelectorAll(".sub").forEach(b => b.setAttribute("aria-selected", b.dataset.log === cur.log));
   $("#chatBox").hidden = cur.log !== "chat";
   $("#runBox").hidden = cur.log !== "run";
   if (cur.tab === "now") drawTrend();
+  if (cur.tab === "plot") drawPlot();
   if (cur.tab === "log") cur.log === "chat" ? loadChat() : loadRun();
   try { localStorage.setItem("utsuwa-ui", JSON.stringify(cur)); } catch {}
 }
@@ -215,6 +263,10 @@ async function loadState() {
   drawTrend();
   $("#events").innerHTML = s.events.length ? s.events.map(e => `<li class="line">${esc(e)}</li>`).join("") : none("まだ無い");
   $("#people").innerHTML = v.people.length ? v.people.map(section).join("") : `<p class="empty-note">人の記録を持たないエージェント。</p>`;
+  const first = !plot && v.plot;
+  plot = v.plot;
+  if (first) render();
+  if (plot) showPlot();
 }
 
 function section(sec) {
@@ -256,6 +308,167 @@ function drawTrend() {
   svg.innerHTML = s;
 }
 addEventListener("resize", drawTrend);
+
+// --- 話題 ---
+let plot = null, open = null, rot = {yaw: -.6, pitch: .35}, grab = null;
+const pending = {};              // "話題/軸" -> 依頼した値。Bot が反映するまで手元の値を見せる
+const PENDING_MS = 180000;
+const axis = k => plot.axes.find(a => a.key === k);
+const pct = (a, v) => (v - a.min) / (a.max - a.min);
+const val = (it, k) => { const p = pending[`${it.name}/${k}`]; return p ? p.value : it.values[k]; };
+const short = v => Number(v).toFixed(2);
+function settle() {
+  const late = [];
+  for (const [id, p] of Object.entries(pending)) {
+    const [name, key] = id.split("/");
+    const it = plot.items.find(x => x.name === name);
+    if (it && Math.abs(it.values[key] - p.value) < .002) delete pending[id];
+    else if (Date.now() - p.at > PENDING_MS) { delete pending[id]; late.push(name); }
+  }
+  const n = Object.keys(pending).length;
+  $("#plotMsg").textContent = late.length ? `反映されなかった: ${late.join("、")}。Bot のログを確かめる。` : n ? `反映待ち ${n} 件（最長1分ほど）` : "";
+}
+function showPlot() {
+  settle();
+  for (const [id, i] of [["x", 0], ["y", 1], ["z", 2]]) if (!axis(cur[id])) cur[id] = plot.axes[i % plot.axes.length].key;
+  for (const id of ["x", "y", "z"]) {
+    const sel = $("#ax" + id.toUpperCase());
+    sel.innerHTML = plot.axes.map(a => `<option value="${esc(a.key)}"${a.key === cur[id] ? " selected" : ""}>${esc(a.name)}</option>`).join("");
+  }
+  document.querySelectorAll("[data-dim]").forEach(b => b.setAttribute("aria-pressed", +b.dataset.dim === cur.dim));
+  $("#axZBox").hidden = cur.dim !== 3;
+  if (cur.tab === "plot") drawPlot();
+  if (document.activeElement?.type === "range") return;   // 動かしている最中のスライダーを壊さない
+  const sorted = plot.items.slice().sort((a, b) => val(b, cur.x) - val(a, cur.x));
+  const on = sorted.filter(x => x.active), off = sorted.filter(x => !x.active);
+  $("#topics").innerHTML = on.map(topicRow).join("") || `<p class="empty-note">まだ話題が無い。</p>`;
+  $("#sleeping").innerHTML = off.map(topicRow).join("");
+  $("#sleepBox").hidden = !off.length;
+  $("#sleepSum").textContent = `眠っている話題 ${off.length} 件`;
+  $("#plotMoved").innerHTML = plot.moved.length ? plot.moved.map(m => `<li><span class="t">${esc(m.at.slice(5, 10).replace("-", "/"))}</span>
+    <span><b>${esc(m.name)}</b>${Object.entries(m.changes).map(([k, [a, b]]) => `<div class="mute">${esc(axis(k)?.name ?? k)} ${a == null ? "なし" : short(a)} から ${short(b)}</div>`).join("")}</span>
+    <span class="mute">${esc(m.why)}</span></li>`).join("") : none("まだ無い");
+}
+function topicRow(it) {
+  const a = plot.axes;
+  return `<details class="topic"${it.name === open ? " open" : ""} data-topic="${esc(it.name)}"><summary>
+    <span><b>${esc(it.name)}</b>${it.learned ? '<span class="chip">覚えた</span>' : ""}</span>
+    <span class="mute">${esc(axis(cur.x).name)} ${short(val(it, cur.x))}</span></summary>
+    <div class="topic-body">${it.note ? `<p class="note">${esc(it.note)}</p>` : ""}${a.map(x => `<label class="axis"><span>${esc(x.name)}</span>
+      <input type="range" min="${x.min}" max="${x.max}" step=".01" value="${val(it, x.key)}" data-key="${esc(x.key)}">
+      <span class="num">${short(val(it, x.key))}</span></label>`).join("")}</div></details>`;
+}
+async function save(name, key, value) {
+  const id = `${name}/${key}`;
+  pending[id] = {value, at: Date.now()};
+  settle();
+  const r = await fetch("api/plot", {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({name, key, value})});
+  if (!r.ok) { delete pending[id]; $("#plotMsg").textContent = `送れなかった（${await r.text()}）。もう一度動かす。`; }
+}
+
+function plotSize() {
+  const W = Math.max(280, $("#plot").clientWidth || 600);
+  return {W, H: Math.round(Math.min(460, W * .95))};
+}
+function drawPlot() {
+  if (!plot || !$("#plot").clientWidth || grab?.point) return;
+  const svg = $("#plot"), {W, H} = plotSize();
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("height", H);
+  svg.classList.toggle("spin", cur.dim === 3);
+  svg.innerHTML = cur.dim === 3 ? draw3(W, H) : draw2(W, H);
+}
+function point(it, x, y, r) {
+  return `<g class="pt${it.learned ? " learned" : ""}${it.name === open ? " on" : ""}" data-name="${esc(it.name)}" transform="translate(${x.toFixed(1)},${y.toFixed(1)})">
+    <circle r="16" fill="transparent"/><circle class="dot" r="${r.toFixed(1)}"/><text x="${(r + 4).toFixed(1)}" y="4">${esc(it.name)}</text></g>`;
+}
+const PAD = {l: 14, r: 14, t: 24, b: 24};
+function place(W, H, ax, ay) {
+  return {sx: v => PAD.l + (W - PAD.l - PAD.r) * pct(ax, v), sy: v => H - PAD.b - (H - PAD.t - PAD.b) * pct(ay, v)};
+}
+function draw2(W, H) {
+  const ax = axis(cur.x), ay = axis(cur.y), {sx, sy} = place(W, H, ax, ay), mx = (ax.min + ax.max) / 2, my = (ay.min + ay.max) / 2;
+  let s = `<line x1="${sx(mx)}" x2="${sx(mx)}" y1="${PAD.t}" y2="${H - PAD.b}" stroke="var(--line)"/>
+    <line x1="${PAD.l}" x2="${W - PAD.r}" y1="${sy(my)}" y2="${sy(my)}" stroke="var(--line)"/>
+    <text x="${W - PAD.r}" y="${H - 7}" text-anchor="end">${esc(ax.name)}が高い</text><text x="${PAD.l}" y="16">${esc(ay.name)}が高い</text>`;
+  for (const it of plot.items.filter(x => x.active)) s += point(it, sx(val(it, ax.key)), sy(val(it, ay.key)), 5);
+  return s;
+}
+function project(p, W, H) {
+  const [x, y, z] = p, cy = Math.cos(rot.yaw), sy = Math.sin(rot.yaw), cp = Math.cos(rot.pitch), sp = Math.sin(rot.pitch);
+  const x1 = x * cy + z * sy, z1 = -x * sy + z * cy, y1 = y * cp - z1 * sp, z2 = y * sp + z1 * cp;
+  const k = 4.5 / (4.5 + z2), u = Math.min(W, H) * .34;
+  return {x: W / 2 + x1 * u * k, y: H / 2 - y1 * u * k, depth: z2, k};
+}
+function draw3(W, H) {
+  const axes = [axis(cur.x), axis(cur.y), axis(cur.z)], P = p => project(p, W, H);
+  const seg = (a, b, c) => { const p = P(a), q = P(b); return `<line x1="${p.x}" y1="${p.y}" x2="${q.x}" y2="${q.y}" stroke="${c}"/>`; };
+  let s = "";
+  for (const a of [-1, 1]) for (const b of [-1, 1]) s += seg([-1, a, b], [1, a, b], "var(--line)") + seg([a, -1, b], [a, 1, b], "var(--line)") + seg([a, b, -1], [a, b, 1], "var(--line)");
+  [[1.18, -1, -1], [-1, 1.18, -1], [-1, -1, 1.18]].forEach((p, i) => {
+    const q = P(p);
+    s += `<text x="${q.x}" y="${q.y}" text-anchor="middle">${esc(axes[i].name)}</text>`;
+  });
+  const pts = plot.items.filter(x => x.active).map(it => ({it, p: P(axes.map(a => pct(a, val(it, a.key)) * 2 - 1))}));
+  for (const {it, p} of pts.sort((a, b) => b.p.depth - a.p.depth)) s += point(it, p.x, p.y, 5 * p.k);
+  return s;
+}
+
+$("#plot").addEventListener("pointerdown", e => {
+  const g = e.target.closest(".pt");
+  grab = {sx: e.clientX, sy: e.clientY, moved: false, name: g?.dataset.name, point: cur.dim === 2 ? g : null, yaw: rot.yaw, pitch: rot.pitch};
+  $("#plot").setPointerCapture(e.pointerId);
+});
+function dragTo(e) {
+  const r = $("#plot").getBoundingClientRect(), {W, H} = plotSize(), ax = axis(cur.x), ay = axis(cur.y);
+  const x = Math.max(PAD.l, Math.min(W - PAD.r, (e.clientX - r.left) * W / r.width));
+  const y = Math.max(PAD.t, Math.min(H - PAD.b, (e.clientY - r.top) * H / r.height));
+  grab.point.setAttribute("transform", `translate(${x},${y})`);
+  return {vx: +(ax.min + (x - PAD.l) / (W - PAD.l - PAD.r) * (ax.max - ax.min)).toFixed(2),
+          vy: +(ay.min + (H - PAD.b - y) / (H - PAD.t - PAD.b) * (ay.max - ay.min)).toFixed(2)};
+}
+$("#plot").addEventListener("pointermove", e => {
+  if (!grab) return;
+  const dx = e.clientX - grab.sx, dy = e.clientY - grab.sy;
+  grab.moved = grab.moved || Math.hypot(dx, dy) > 4;
+  if (!grab.moved) return;
+  if (grab.point) dragTo(e);
+  else if (cur.dim === 3) {
+    rot.yaw = grab.yaw + dx * .01;
+    rot.pitch = Math.max(-1.4, Math.min(1.4, grab.pitch + dy * .01));
+    $("#plot").innerHTML = draw3(...Object.values(plotSize()));
+  }
+});
+$("#plot").addEventListener("pointerup", async e => {
+  const g = grab;
+  if (!g) return;
+  if (g.point && g.moved) {
+    const {vx, vy} = dragTo(e);
+    grab = null;
+    await Promise.all([save(g.name, cur.x, vx), cur.y !== cur.x ? save(g.name, cur.y, vy) : null]);
+    showPlot();
+    return;
+  }
+  grab = null;
+  if (!g.moved && g.name) { open = g.name; showPlot(); document.querySelector(`[data-topic="${CSS.escape(g.name)}"]`)?.scrollIntoView({block: "nearest"}); }
+});
+$("#plot").addEventListener("pointercancel", () => { grab = null; drawPlot(); });
+document.addEventListener("click", e => {
+  const d = e.target.closest("[data-dim]");
+  if (d) { cur.dim = +d.dataset.dim; try { localStorage.setItem("utsuwa-ui", JSON.stringify(cur)); } catch {} showPlot(); }
+});
+for (const id of ["x", "y", "z"]) $("#ax" + id.toUpperCase()).addEventListener("change", e => { cur[id] = e.target.value; try { localStorage.setItem("utsuwa-ui", JSON.stringify(cur)); } catch {} showPlot(); });
+for (const box of ["#topics", "#sleeping"]) {
+  const el = $(box);
+  el.addEventListener("toggle", e => { if (e.target.open) open = e.target.dataset.topic; else if (open === e.target.dataset.topic) open = null; drawPlot(); }, true);
+  el.addEventListener("input", e => { if (e.target.type === "range") e.target.closest(".axis").querySelector(".num").textContent = short(e.target.value); });
+  el.addEventListener("change", async e => {
+    if (e.target.type !== "range") return;
+    await save(e.target.closest("[data-topic]").dataset.topic, e.target.dataset.key, +e.target.value);
+    e.target.blur();
+    showPlot();
+  });
+}
+addEventListener("resize", drawPlot);
 
 // --- ログ ---
 let chatRows = [], runLines = [];

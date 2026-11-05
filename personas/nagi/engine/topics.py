@@ -22,6 +22,11 @@ JOINED_AROUSAL, IGNORED_AROUSAL = 0.03, -0.01
 FELT_FROM = 2.0       # 人の反応による気分の動きが、これ以上なら快を動かす
 FELT_VALENCE = 0.03
 ANCHOR_RANGE = 0.2
+GUARD_FROM = 0.6      # 踏み込まれたくなさがこれ以上なら、掘られた時にはぐらかす
+KNOW_UNDER = 0.35     # 詳しさがこれ未満なら、語らず聞く側に回る
+MOVED_KEEP = 5        # 話題ごとに残す、値が動いた記録の数
+AXES = [{"key": "valence", "name": "好き嫌い", "min": -1, "max": 1},
+        {"key": "arousal", "name": "乗りやすさ", "min": 0, "max": 1}]
 
 
 def clean(name):
@@ -50,6 +55,42 @@ def learn(topics, name, like, at):
     return "added"
 
 
+def value(t, axis):
+    """話題の軸の値。まだ無ければ範囲の中央。"""
+    return t.get(axis["key"], (axis["min"] + axis["max"]) / 2)
+
+
+def clip(axis, v):
+    return round(max(axis["min"], min(axis["max"], float(v))), 3)
+
+
+def unfilled(topics, axes, n):
+    """問いのある軸で、値がまだ無い話題を n 件まで。[(話題, [軸])]。"""
+    out = []
+    for t in topics:
+        lack = [a for a in axes if a.get("question") and a["key"] not in t]
+        if lack:
+            out.append((t, lack))
+    return out[:n]
+
+
+def track(t, before, at, why):
+    """値が動いていたら残す。before は動かす前の {軸: 値}。"""
+    changes = {k: [v, t.get(k)] for k, v in before.items() if t.get(k) != v}
+    if changes:
+        t["moved"] = (t.get("moved", []) + [{"at": at, "why": why, "changes": changes}])[-MOVED_KEEP:]
+
+
+def put(t, axis, v, at):
+    """人が値を置く。錨がある軸は錨も動かす（そのままだと、経験で元へ戻るため）。"""
+    key = axis["key"]
+    before = {key: t.get(key)}
+    t[key] = clip(axis, v)
+    if key in t.get("anchor", {}):
+        t["anchor"][key] = t[key]
+    track(t, before, at, "UI で直した")
+
+
 def mentioned(t, text):
     """話題の名前（「ピーマン・ナス」なら各部分）が会話に出ているか。"""
     text = text.casefold()
@@ -68,6 +109,19 @@ def as_words(topics):
     likes = [t["name"] for t in sorted(topics, key=lambda t: -t["valence"]) if t["valence"] >= SHOW_FROM]
     hates = [t["name"] for t in sorted(topics, key=lambda t: t["valence"]) if t["valence"] <= -SHOW_FROM]
     return f"好き: {'、'.join(likes) or '特に無し'}／嫌い: {'、'.join(hates) or '特に無し'}"
+
+
+def as_cautions(topics, text):
+    """会話に名前が出た話題の、振る舞いの言葉。LLM に数値は渡さない。"""
+    out = []
+    for t in topics:
+        if not mentioned(t, text):
+            continue
+        if t.get("guard", 0) >= GUARD_FROM:
+            out.append(f"{t['name']}は掘られると照れる、はぐらかしたい")
+        if t.get("know", 1) < KNOW_UNDER:
+            out.append(f"{t['name']}は語れるほど知らない、聞く側に回る")
+    return "／".join(out)
 
 
 def experience(t, joined, felt):

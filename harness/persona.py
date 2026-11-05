@@ -6,8 +6,11 @@
 - 部品は数値の状態を持ってよい。置き場は `self.state(名前)`（`02 State/<名前>.json`）
 - 会話用 LLM に渡すのは `inner()` が言葉に直した節だけ。数値は渡さない（minato 2026-10-08 の比較）
 """
+import logging
 import re
 from dataclasses import dataclass
+
+log = logging.getLogger("utsuwa")
 
 
 @dataclass
@@ -46,8 +49,17 @@ class Persona:
     def view(self, t):
         """Web UI に見せる今の様子。読むだけで、状態を変えない。
         trend は {"hist": [[時刻, 値]], "events": [{"at", "why", "delta"}], "band": ふつうの幅, "legend": 説明}、
-        people は {"name", "lead", "empty", "items": [{"name", "tag", "value", "tone", "note", "events"}]} の並び。"""
-        return {"say": self.presence(t).label, "why": "", "meters": [], "trend": None, "people": []}
+        people は {"name", "lead", "empty", "items": [{"name", "tag", "value", "tone", "note", "events"}]} の並び、
+        plot は {"name", "axes": [{"key", "name", "min", "max"}], "items": [{"name", "note", "learned", "active", "values"}],
+        "moved": [{"name", "at", "why", "changes"}]}。"""
+        return {"say": self.presence(t).label, "why": "", "meters": [], "trend": None, "people": [], "plot": None}
+
+    async def slow(self, t):
+        """1分ごとに呼ぶ。Jev に聞く、時間のかかる片付け用。"""
+
+    def on_request(self, req, t):
+        """Web UI からの変更依頼。読めない依頼はログに出して捨てる。"""
+        log.warning("読めない依頼: %s", req)
 
     def announce(self, event):
         """出来事のうち、会話から抜ける・戻る一言を添えるもの。添えるなら会話用 LLM への【補足】、添えないなら None。"""
