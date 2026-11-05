@@ -42,6 +42,13 @@ class Persona:
         """1分ごとに呼ぶ。起きた出来事（「講義が終わった」など）の言葉のリストを返す。"""
         return []
 
+    # --- Web UI ----------------------------------------------------------------------
+    def view(self, t):
+        """Web UI に見せる今の様子。読むだけで、状態を変えない。
+        trend は {"hist": [[時刻, 値]], "events": [{"at", "why", "delta"}], "band": ふつうの幅, "legend": 説明}、
+        people は {"name", "lead", "empty", "items": [{"name", "tag", "value", "tone", "note", "events"}]} の並び。"""
+        return {"say": self.presence(t).label, "why": "", "meters": [], "trend": None, "people": []}
+
     def announce(self, event):
         """出来事のうち、会話から抜ける・戻る一言を添えるもの。添えるなら会話用 LLM への【補足】、添えないなら None。"""
         return None

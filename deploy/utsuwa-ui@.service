@@ -1,0 +1,15 @@
+# 様子を見る Web UI。待ち受けのアドレスは .env の UI_HOST、UI_PORT（例: systemctl enable --now utsuwa-ui@ナギ）
+[Unit]
+Description=utsuwa ui %I
+After=network-online.target remote-fs.target
+
+[Service]
+WorkingDirectory=/opt/utsuwa
+# OMV が後から起きる時があるので、繋がるまで30秒ごとにやり直す
+ExecStartPre=/bin/sh -c "mountpoint -q /mnt/omv_obsidian || mount /mnt/omv_obsidian"
+ExecStart=/opt/utsuwa/venv/bin/python -m harness.ui "/mnt/omv_obsidian/12 AIたち/%I" --env /opt/utsuwa/.env
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

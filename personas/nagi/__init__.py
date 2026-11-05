@@ -26,6 +26,9 @@ from personas.nagi.rules import apply as apply_rules
 
 log = logging.getLogger("utsuwa")
 
+MOOD_EVERY, MOOD_KEEP = timedelta(minutes=10), timedelta(hours=48)
+DOING = {"寝ている": "寝てる", "起きたて": "起きたて", "講義中": "講義中", "バイト中": "バイト中", "離席中": "席を外してる",
+         "深夜": "夜ふかし中", "ふつう": "起きてる"}
 ANNOUNCE = {"寝た": "眠気が限界なので、今から寝る。会話から抜ける一言だけ",
             "落ちる": "人と話すのがしんどくなったので、少し会話から抜ける。重くならない一言だけ",
             "コンビニに行く": "腹が減ったので、今からコンビニに行く。一言だけ",
@@ -119,6 +122,7 @@ class Nagi(Persona):
             ev.append(SCHED_END[last])
         self.mem.data["last_sched"] = sched
         self.mood_settle(t)
+        self.keep_mood(t)
         self.close_episodes(t)
         self.close_policy(t)
         for s in (self.body_state, self.mood_state, self.mem):
@@ -136,6 +140,56 @@ class Nagi(Persona):
                         busy=st in ("講義中", "バイト中"), away=st in ("寝ている", "離席中"),
                         rate=0.4 if st == "バイト中" else 1.0)
 
+    # --- Web UI ----------------------------------------------------------------------------
+    def view(self, t):
+        p = self.presence(t)
+        base = self.mood_base(t)
+        m = dict(self.m, events=list(self.m["events"]))     # 読むだけ。今の時刻まで戻した値を見せる
+        mood.settle(m, t, base)
+        words = mood.as_words(m, base)
+        reason = re.search(r"（(.*)）$", words)
+        feel = body.as_feelings(self.b, t)
+        feel = "" if feel.startswith("特に無し") else "、" + feel
+        return {
+            "say": f"{DOING.get(p.state, p.label)}。機嫌は{re.sub(r'（.*）$', '', words)}{feel}。",
+            "why": f"気分 {m['v']:+.0f}（体から来る基準 {base:+.0f}）" + (f"。理由: {reason[1]}" if reason else ""),
+            "device": p.device,
+            "meters": [{"name": "眠気", "value": round(body.felt_sleepy(self.b, t)), "max": 100},
+                       {"name": "空腹", "value": round(self.b["hunger"]), "max": 100},
+                       {"name": "気力", "value": round(self.b["energy"]), "max": 100},
+                       {"name": "残高", "value": self.b["money"], "unit": "円"}],
+            "trend": {"hist": self.mem.data.get("mood_hist", []), "events": list(reversed(m["events"])), "band": 14,
+                      "legend": "直近24時間の快・不快。上が快、下が不快。薄い帯が「ふつう」の範囲。点は気分を動かした出来事"},
+            "people": [self.view_likes(t), self.view_anger(t), self.view_names()],
+        }
+
+    def view_likes(self, t):
+        items = [{"name": p.get("display"), "tag": affinity.band(p.get("v", 0)), "value": f"{p.get('v', 0):+.1f}",
+                  "tone": "pos" if p.get("v", 0) >= 15 else "neg" if p.get("v", 0) <= -15 else "",
+                  "events": [{"when": affinity.when(datetime.fromisoformat(e["at"]), t), "what": e["what"],
+                              "quote": e.get("quote"), "delta": e["delta"]} for e in reversed(p.get("events", []))]}
+                 for p in sorted(self.likes.data.values(), key=lambda x: -x.get("v", 0))]
+        return {"name": "好感度", "lead": "−100〜+100。最初は+20。名前を押すと、動いた出来事が出る",
+                "empty": "まだ誰も覚えていない", "items": items}
+
+    def view_anger(self, t):
+        items = []
+        for uid, r in self.anger_state.data.items():
+            close = self.likes.data.get(uid, {}).get("v", 0) >= anger.CLOSE_FROM
+            v = anger.cool(dict(r), t, close)
+            if v >= anger.FORGET:
+                items.append({"name": r.get("display"), "tag": anger.band(v), "value": round(v), "tone": "neg",
+                              "note": f"「{r.get('why')}」と言われた"})
+        return {"name": "怒り", "lead": "今怒っている相手。時間が経つと冷める", "empty": "今は誰にも怒っていない",
+                "items": sorted(items, key=lambda x: -x["value"])}
+
+    def view_names(self):
+        items = [{"name": p.get("display"),
+                  "note": "、".join(f"{k} {f['n']}回" for k, f in
+                                   sorted(p.get("forms", {}).items(), key=lambda x: -x[1]["n"]))}
+                 for p in self.names_state.data.values()]
+        return {"name": "呼び名", "lead": "誰がどう呼ばれているか", "empty": "まだ無い", "items": items}
+
     # --- 気分 ----------------------------------------------------------------------------
     def mood_base(self, t):
         return mood.baseline(body.felt_sleepy(self.b, t), self.b["hunger"], self.b["energy"], self.b["money"] < body.BROKE)
@@ -144,6 +198,14 @@ class Nagi(Persona):
         base = self.mood_base(t)
         mood.settle(self.m, t, base)
         return base
+
+    def keep_mood(self, t):
+        """Web UI のグラフ用に、気分を10分ごとに残す。"""
+        hist = self.mem.data.setdefault("mood_hist", [])
+        if hist and t - datetime.fromisoformat(hist[-1][0]) < MOOD_EVERY:
+            return
+        hist.append([t.isoformat(timespec="seconds"), round(self.m["v"], 1)])
+        self.mem.data["mood_hist"] = [x for x in hist if t - datetime.fromisoformat(x[0]) <= MOOD_KEEP]
 
     def mood_hit(self, delta, why, people=True, said_at=None):
         """気分を動かす。people は人の言動によるものか。人の分は、経験と予想の答えに使う。"""

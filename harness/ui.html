@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#1F2A44">
+<title>様子</title>
+<style>
+/* 明るい側は学食の蛍光灯、暗い帯は窓の外の夜（nagi-ui から）。目立たせるのは「いま」の帯だけにする */
+:root{
+  --bg:#EEF0F3;--surface:#FFFFFF;--ink:#1C2230;--mute:#5E6675;--line:#D9DDE3;
+  --acc:#2B6C8F;--night:#1F2A44;--night-ink:#F3F5FA;--night-mute:#AEB8CC;
+  --pos:#22704A;--neg:#AD3A30;--warn:#855709;--pos-night:#7DD3A4;--neg-night:#F29B90;
+  --tab-h:58px;
+}
+@media (prefers-color-scheme:dark){:root{
+  --bg:#121722;--surface:#1A2030;--ink:#E8ECF3;--mute:#9AA3B5;--line:#2C3446;
+  --acc:#7FB6D6;--night:#24304C;--pos:#6CC795;--neg:#EE8A7E;--warn:#E3AE57;
+}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+[hidden]{display:none !important}
+body{margin:0;background:var(--bg);color:var(--ink);
+  font:15px/1.65 "Hiragino Sans","Hiragino Kaku Gothic ProN","Noto Sans JP","Yu Gothic UI",system-ui,sans-serif;
+  font-variant-numeric:tabular-nums;padding-bottom:calc(var(--tab-h) + env(safe-area-inset-bottom))}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:3px solid var(--acc);outline-offset:2px;border-radius:4px}
+
+.top{position:sticky;top:0;z-index:5;background:var(--bg);border-bottom:1px solid var(--line)}
+.top-in{max-width:880px;margin:0 auto;padding:10px 16px;display:flex;align-items:baseline;gap:12px}
+.top h1{font-size:18px;font-weight:800;letter-spacing:.02em;margin:0}
+.top .clock{color:var(--mute);font-size:13px}
+.groups{display:none;gap:4px;margin-left:auto}
+
+.dock{position:fixed;left:0;right:0;bottom:0;z-index:6;background:var(--surface);border-top:1px solid var(--line);
+  display:grid;grid-template-columns:repeat(3,1fr);padding-bottom:env(safe-area-inset-bottom)}
+.grp{border:0;background:none;height:var(--tab-h);cursor:pointer;color:var(--mute);font-size:13px;font-weight:600;
+  display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+.grp svg{width:22px;height:22px;stroke:currentColor;fill:none;stroke-width:1.8}
+.grp[aria-selected=true]{color:var(--acc)}
+.groups .grp{height:auto;flex-direction:row;padding:6px 12px;border-radius:8px;font-size:14px}
+.groups .grp[aria-selected=true]{background:var(--surface);box-shadow:inset 0 0 0 1px var(--line)}
+@media (min-width:760px){.dock{display:none}.groups{display:flex}body{padding-bottom:0}}
+
+main{max-width:880px;margin:0 auto;padding:16px 16px 32px;overflow-wrap:anywhere}
+.view{display:none}.view.on{display:block}
+h2{font-size:15px;font-weight:700;margin:28px 0 8px}
+h2:first-child{margin-top:4px}
+.lead{color:var(--mute);font-size:13px;margin:0 0 10px;max-width:46em}
+.mute{color:var(--mute)}.pos{color:var(--pos)}.neg{color:var(--neg)}.warn{color:var(--warn)}
+
+.down{background:var(--neg);color:#fff;border-radius:10px;padding:10px 14px;margin:0 0 10px;font-weight:700}
+.night{background:var(--night);color:var(--night-ink);border-radius:14px;padding:18px 18px 10px;margin:4px 0 8px}
+.night .say{font-size:clamp(20px,5.4vw,26px);font-weight:800;line-height:1.45;margin:0}
+.night .why{color:var(--night-mute);font-size:13px;margin:6px 0 2px}
+.night svg{display:block;width:100%;margin-top:8px}
+.night .legend{color:var(--night-mute);font-size:12px;margin:2px 0 4px}
+.facts{color:var(--mute);font-size:13px;margin:6px 2px 0}
+
+.body4{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:18px 0 0}
+@media (max-width:420px){.body4{grid-template-columns:repeat(2,1fr)}}
+.m .k{color:var(--mute);font-size:12px}
+.m .v{font-size:22px;font-weight:800;line-height:1.2}
+.m small{font-size:13px;font-weight:600}
+.m .bar{height:4px;background:var(--line);border-radius:2px;margin-top:5px;overflow:hidden}
+.m .bar i{display:block;height:100%;background:var(--acc)}
+
+.rows{list-style:none;margin:0;padding:0;border-top:1px solid var(--line)}
+.rows li{display:grid;grid-template-columns:4.2em 1fr auto;gap:2px 12px;padding:9px 2px;border-bottom:1px solid var(--line);align-items:baseline}
+.rows li.line{display:block}
+.rows li.talk{grid-template-columns:4.2em 1fr}
+.rows li.me{background:var(--surface)}
+.rows .t{color:var(--mute);font-size:13px}
+.rows .d{font-weight:700;text-align:right}
+.rows .empty{display:block;color:var(--mute)}
+.rows .who{font-weight:700}
+.chip{display:inline-block;font-size:12px;font-weight:700;padding:0 8px;border-radius:999px;border:1px solid currentColor;white-space:nowrap;margin-left:6px;color:var(--mute)}
+
+details.person{border-bottom:1px solid var(--line)}
+details.person summary{list-style:none;cursor:pointer;display:grid;grid-template-columns:1fr auto auto;gap:12px;padding:11px 2px;align-items:baseline}
+details.person summary::-webkit-details-marker{display:none}
+.score{font-weight:800;font-size:18px}
+details.person .rows{border-top:0;margin:0 0 10px 10px}
+.person-list{border-top:1px solid var(--line)}
+.plain{display:grid;grid-template-columns:1fr auto auto;gap:2px 12px;padding:11px 2px;border-bottom:1px solid var(--line);align-items:baseline}
+.plain .note{grid-column:1/-1;color:var(--mute);font-size:13px}
+.empty-note{color:var(--mute);margin:0}
+
+.subs{display:flex;gap:6px;margin:0 0 12px}
+.sub{border:1px solid var(--line);background:var(--surface);border-radius:999px;padding:6px 14px;min-height:36px;cursor:pointer}
+.sub[aria-selected=true]{background:var(--ink);color:var(--bg);border-color:var(--ink)}
+.tools{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 10px}
+.search,select{background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:8px 12px;min-height:42px}
+.search{flex:1 1 200px;max-width:360px}
+.btn{border:1px solid var(--acc);background:transparent;color:var(--acc);border-radius:10px;padding:8px 16px;min-height:42px;cursor:pointer;font-weight:700}
+pre.log{white-space:pre-wrap;word-break:break-all;font:12px/1.55 ui-monospace,Menlo,Consolas,monospace;margin:0;max-height:70vh;overflow:auto;
+  background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px}
+</style>
+</head>
+<body>
+<header class="top"><div class="top-in">
+  <h1 id="name"></h1><span class="clock" id="clock"></span>
+  <nav class="groups" id="tabsTop" aria-label="画面"></nav>
+</div></header>
+
+<main>
+<section class="view" id="v-now">
+  <p class="down" id="down" hidden></p>
+  <div class="night">
+    <p class="say" id="say">…</p>
+    <p class="why" id="why"></p>
+    <div id="trendBox" hidden>
+      <svg id="trend" role="img" aria-label="気分の推移"></svg>
+      <p class="legend" id="legend"></p>
+    </div>
+  </div>
+  <p class="facts" id="facts"></p>
+  <div class="body4" id="meters"></div>
+  <div id="moved" hidden><h2>気分を動かした出来事</h2><ul class="rows" id="movedList"></ul></div>
+  <h2>今日の出来事</h2><ul class="rows" id="events"></ul>
+</section>
+
+<section class="view" id="v-people"><div id="people"></div></section>
+
+<section class="view" id="v-log">
+  <div class="subs" role="tablist" aria-label="ログの種類">
+    <button class="sub" type="button" role="tab" data-log="chat">会話</button>
+    <button class="sub" type="button" role="tab" data-log="run">動作</button>
+  </div>
+  <div id="chatBox">
+    <div class="tools">
+      <select id="day" aria-label="日付"></select>
+      <input class="search" id="chatFilter" placeholder="名前や言葉で絞り込む" aria-label="会話を絞り込む">
+    </div>
+    <ul class="rows" id="chat"></ul>
+  </div>
+  <div id="runBox">
+    <div class="tools">
+      <input class="search" id="runFilter" placeholder="絞り込む（例: 判断、書くのに）" aria-label="動作のログを絞り込む">
+      <button class="btn" id="reload" type="button">読み直す</button>
+    </div>
+    <pre class="log" id="run"></pre>
+  </div>
+</section>
+</main>
+
+<nav class="dock" id="tabs" aria-label="画面"></nav>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+const sign = v => (v > 0 ? "+" : "") + v;
+const hm = at => esc(String(at).slice(11, 16));
+const none = t => `<li class="empty">${t}</li>`;
+const json = async url => { const r = await fetch(url); if (!r.ok) throw new Error(`${url}: ${r.status}`); return r.json(); };
+
+const TABS = [
+  ["now", "いま", '<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 8v4l3 2"/></svg>'],
+  ["people", "人", '<svg viewBox="0 0 24 24"><circle cx="9" cy="9" r="3.2"/><path d="M3.5 19c.8-3 3-4.6 5.5-4.6s4.7 1.6 5.5 4.6"/><circle cx="17" cy="8" r="2.4"/><path d="M16 13.6c2.2.2 3.8 1.6 4.5 4"/></svg>'],
+  ["log", "ログ", '<svg viewBox="0 0 24 24"><path d="M7 4h10v16H7z"/><path d="M10 8h4M10 12h4M10 16h2"/></svg>'],
+];
+let cur = {tab: "now", log: "chat"};
+try { cur = {...cur, ...JSON.parse(localStorage.getItem("utsuwa-ui") || "{}")}; } catch {}
+if (!TABS.some(x => x[0] === cur.tab)) cur.tab = "now";
+
+function render() {
+  const btn = ([id, name, icon]) => `<button class="grp" type="button" data-tab="${id}" aria-selected="${id === cur.tab}">${icon}<span>${name}</span></button>`;
+  $("#tabs").innerHTML = $("#tabsTop").innerHTML = TABS.map(btn).join("");
+  document.querySelectorAll(".view").forEach(v => v.classList.toggle("on", v.id === "v-" + cur.tab));
+  document.querySelectorAll(".sub").forEach(b => b.setAttribute("aria-selected", b.dataset.log === cur.log));
+  $("#chatBox").hidden = cur.log !== "chat";
+  $("#runBox").hidden = cur.log !== "run";
+  if (cur.tab === "now") drawTrend();
+  if (cur.tab === "log") cur.log === "chat" ? loadChat() : loadRun();
+  try { localStorage.setItem("utsuwa-ui", JSON.stringify(cur)); } catch {}
+}
+document.addEventListener("click", e => {
+  const t = e.target.closest("[data-tab]"), l = e.target.closest("[data-log]");
+  if (t) { cur.tab = t.dataset.tab; render(); scrollTo(0, 0); }
+  if (l) { cur.log = l.dataset.log; render(); }
+});
+
+// --- いま ---
+let trend = null;
+function age(s) {
+  if (!s.saved_at) return "状態の記録はまだ無い。";
+  const min = Math.max(0, Math.round((new Date(s.now) - new Date(s.saved_at)) / 60000));
+  return min ? `状態の記録は${min}分前のもの。` : "状態の記録は今のもの。";
+}
+async function loadState() {
+  let s;
+  try { s = await json("api/state"); }
+  catch (e) { $("#down").hidden = false; $("#down").textContent = `読み込めなかった（${e.message}）。30秒後に読み直す。`; return; }
+  document.title = `${s.name}の様子`;
+  $("#name").textContent = s.name;
+  $("#clock").textContent = s.now.slice(5, 16).replace("T", " ") + " 時点";
+  const stopped = s.running && s.running !== "active";
+  $("#down").hidden = !stopped;
+  if (stopped) $("#down").textContent = `Bot が動いていない（${s.running}）。ここに出ている様子は止まった時のもの。`;
+  const v = s.view;
+  $("#say").textContent = v.say;
+  $("#why").textContent = v.why;
+  $("#facts").textContent = `今日は ${s.replies} 回返事した（1日 ${s.replies_max} 回まで）。` +
+    (s.deferred ? `後で返す約束が ${s.deferred} 件ある。` : "") + age(s);
+  $("#meters").innerHTML = v.meters.map(m => `<div class="m"><div class="k">${esc(m.name)}</div>
+    <div class="v">${Number(m.value).toLocaleString()}${m.unit ? `<small>${esc(m.unit)}</small>` : ""}</div>
+    ${m.max ? `<div class="bar"><i style="width:${Math.max(0, Math.min(100, m.value / m.max * 100))}%"></i></div>` : ""}</div>`).join("");
+  trend = v.trend;
+  $("#trendBox").hidden = $("#moved").hidden = !trend;
+  if (trend) {
+    $("#legend").textContent = trend.legend;
+    $("#movedList").innerHTML = trend.events.length ? trend.events.map(e => `<li><span class="t">${hm(e.at)}</span><span>${esc(e.why)}</span>
+      <span class="d ${e.delta > 0 ? "pos" : "neg"}">${sign(e.delta)}</span></li>`).join("") : none("まだ無い");
+  }
+  drawTrend();
+  $("#events").innerHTML = s.events.length ? s.events.map(e => `<li class="line">${esc(e)}</li>`).join("") : none("まだ無い");
+  $("#people").innerHTML = v.people.length ? v.people.map(section).join("") : `<p class="empty-note">人の記録を持たないエージェント。</p>`;
+}
+
+function section(sec) {
+  const row = p => {
+    const head = `<span><b>${esc(p.name)}</b></span><span class="mute">${esc(p.tag)}</span><span class="score ${p.tone || ""}">${esc(p.value)}</span>`;
+    if (!p.events) return `<div class="plain">${head}${p.note ? `<div class="note">${esc(p.note)}</div>` : ""}</div>`;
+    return `<details class="person"><summary>${head}</summary><ul class="rows">${p.events.length ? p.events.map(e => `<li><span class="t">${esc(e.when)}</span>
+      <span>${esc(e.what)}${e.quote ? `<div class="mute">「${esc(e.quote)}」</div>` : ""}</span>
+      <span class="d ${e.delta > 0 ? "pos" : "neg"}">${sign(e.delta)}</span></li>`).join("") : none("まだ無い")}</ul></details>`;
+  };
+  return `<h2>${esc(sec.name)}</h2><p class="lead">${esc(sec.lead)}</p>` +
+    (sec.items.length ? `<div class="person-list">${sec.items.map(row).join("")}</div>` : `<p class="empty-note">${esc(sec.empty)}</p>`);
+}
+
+// 幅に合わせて描き、文字はいつも12px（nagi-ui でスマホの文字が5.4pxになった）
+function drawTrend() {
+  const svg = $("#trend");
+  if (!trend || !svg.clientWidth) return;
+  const W = Math.max(280, svg.clientWidth), H = Math.round(Math.min(190, Math.max(130, W * .3)));
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`); svg.setAttribute("height", H);
+  const L = 30, R = 6, T = 8, B = 20, now = Date.now(), span = 24 * 3600e3, ink = "var(--night-mute)";
+  const pts = trend.hist.map(([at, v]) => [new Date(at).getTime(), v]).filter(([t]) => now - t <= span);
+  const top = Math.min(100, Math.max(20, Math.ceil(Math.max(0, ...pts.map(([, v]) => Math.abs(v))) * 1.15 / 10) * 10));
+  const sx = t => L + (W - L - R) * (1 - (now - t) / span), sy = v => T + (H - T - B) * (1 - (v + top) / (2 * top));
+  let s = `<rect x="${L}" y="${sy(trend.band)}" width="${W - L - R}" height="${sy(-trend.band) - sy(trend.band)}" fill="#fff" opacity=".07"/>`;
+  for (const v of [top, 0, -top]) s += `<line x1="${L}" x2="${W - R}" y1="${sy(v)}" y2="${sy(v)}" stroke="#fff" opacity="${v ? .1 : .3}"/>
+    <text x="${L - 5}" y="${sy(v) + 4}" text-anchor="end" font-size="12" fill="${ink}">${v > 0 ? "+" + v : v}</text>`;
+  for (const h of (W < 420 ? [24, 12, 0] : [24, 18, 12, 6, 0])) s += `<text x="${sx(now - h * 3600e3)}" y="${H - 4}"
+    text-anchor="${h === 24 ? "start" : h ? "middle" : "end"}" font-size="12" fill="${ink}">${h ? h + "時間前" : "今"}</text>`;
+  if (pts.length > 1) {
+    const line = pts.map(([t, v]) => `${sx(t).toFixed(1)},${sy(v).toFixed(1)}`).join(" ");
+    s += `<polygon points="${sx(pts[0][0])},${sy(0)} ${line} ${sx(pts[pts.length - 1][0])},${sy(0)}" fill="#fff" opacity=".1"/>
+      <polyline points="${line}" fill="none" stroke="var(--night-ink)" stroke-width="2" stroke-linejoin="round"/>`;
+  } else s += `<text x="${W / 2}" y="${H / 2 - 12}" text-anchor="middle" font-size="13" fill="${ink}">記録が溜まるまで待つ（10分ごとに1点）</text>`;
+  for (const e of trend.events) {
+    const t = new Date(e.at).getTime();
+    if (now - t <= span) s += `<circle cx="${sx(t)}" cy="${sy(0)}" r="4.5" fill="${e.delta > 0 ? "var(--pos-night)" : "var(--neg-night)"}"><title>${hm(e.at)} ${esc(e.why)} ${sign(e.delta)}</title></circle>`;
+  }
+  svg.innerHTML = s;
+}
+addEventListener("resize", drawTrend);
+
+// --- ログ ---
+let chatRows = [], runLines = [];
+async function loadChat(day) {
+  const d = await json("api/chat" + (day ? `?day=${encodeURIComponent(day)}` : ""));
+  $("#day").innerHTML = d.days.map(x => `<option${x === d.day ? " selected" : ""}>${esc(x)}</option>`).join("");
+  chatRows = d.rows;
+  showChat();
+}
+function showChat() {
+  const q = $("#chatFilter").value.trim();
+  const rows = q ? chatRows.filter(r => `${r.author} ${r.text}`.includes(q)) : chatRows;
+  $("#chat").innerHTML = rows.length ? rows.map(r => `<li class="talk${r.me ? " me" : ""}"><span class="t">${hm(r.at)}</span>
+    <span><span class="who">${esc(r.author)}</span>${r.shadow ? '<span class="chip">読むだけ</span>' : ""}<div>${esc(r.text)}</div></span></li>`).join("") : none("この日の会話は無い");
+}
+async function loadRun() { runLines = (await json("api/log?n=400")).lines; showRun(); }
+function showRun() {
+  const q = $("#runFilter").value.trim();
+  const box = $("#run");
+  box.textContent = (q ? runLines.filter(x => x.includes(q)) : runLines).join("\n") || "ログは無い";
+  box.scrollTop = box.scrollHeight;
+}
+$("#day").addEventListener("change", e => loadChat(e.target.value));
+$("#chatFilter").addEventListener("input", showChat);
+$("#runFilter").addEventListener("input", showRun);
+$("#reload").addEventListener("click", loadRun);
+
+render();
+loadState();
+setInterval(loadState, 30000);
+</script>
+</body>
+</html>
