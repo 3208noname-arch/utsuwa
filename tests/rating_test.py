@@ -38,6 +38,7 @@ class RatingTest(unittest.TestCase):
         async def go():
             got = []
             gw = Gateway()
+            gw.describe = lambda m: m.content
             gw.agent = SimpleNamespace(rate=lambda r: _keep(got, r))
             me = SimpleNamespace(id=1)
             gw._connection.user = me
