@@ -431,7 +431,9 @@ function draw3(W, H) {
   return s;
 }
 
+$("#plot").addEventListener("mousedown", e => { if (e.button === 1 && cur.dim === 3) e.preventDefault(); });   // 中ボタンの自動スクロールを止める
 $("#plot").addEventListener("pointerdown", e => {
+  if (e.button === 1 && cur.dim !== 3) return;
   const g = e.target.closest(".pt");
   grab = {sx: e.clientX, sy: e.clientY, moved: false, name: g?.dataset.name, point: cur.dim === 2 ? g : null, yaw: rot.yaw, pitch: rot.pitch};
   $("#plot").setPointerCapture(e.pointerId);
@@ -451,8 +453,8 @@ $("#plot").addEventListener("pointermove", e => {
   if (!grab.moved) return;
   if (grab.point) dragTo(e);
   else if (cur.dim === 3) {
-    rot.yaw = grab.yaw + dx * .01;
-    rot.pitch = Math.max(-1.4, Math.min(1.4, grab.pitch + dy * .01));
+    rot.yaw = grab.yaw - dx * .01;
+    rot.pitch = Math.max(-1.4, Math.min(1.4, grab.pitch - dy * .01));
     $("#plot").innerHTML = draw3(...Object.values(plotSize()));
   }
 });
