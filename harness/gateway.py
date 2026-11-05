@@ -12,7 +12,43 @@ from harness.schedule import ago
 
 log = logging.getLogger("utsuwa")
 
-LABELS = ["自然", "流れとズレてる", "キャラじゃない", "バグ"]
+LABELS = ["自然", "流れとズレてる", "キャラじゃない", "感情がズレてる", "バグ"]
+DETAILS = {"感情がズレてる": ["強すぎ", "弱すぎ", "感情の種類が違う"]}   # 2段目で中身を選ばせるもの
+DETAIL_HELP = {"感情がズレてる": "強すぎ・弱すぎ＝反応の大きさ。感情の種類が違う＝喜ぶ場面で怒るなど"}
+
+
+class CommentModal(discord.ui.Modal, title="ひと言（空欄でもOK）"):
+    comment = discord.ui.TextInput(label="どこが気になったか", style=discord.TextStyle.paragraph,
+                                   required=False, max_length=300)
+
+    def __init__(self, rec, agent):
+        super().__init__()
+        self.rec, self.agent = rec, agent
+
+    async def on_submit(self, interaction):
+        name = f"{self.rec['label']}（{self.rec['detail']}）" if self.rec.get("detail") else self.rec["label"]
+        await interaction.response.send_message(f"「{name}」で記録した。ありがとう", ephemeral=True)
+        await self.agent.rate({**self.rec, "comment": str(self.comment.value or "").strip(),
+                               "rater": interaction.user.display_name,
+                               "at": discord.utils.utcnow().astimezone().replace(tzinfo=None)
+                               .isoformat(timespec="seconds")})
+
+
+class ChoiceView(discord.ui.View):
+    """ボタンを並べ、押されたら on_pick(interaction, 押された名前) を呼ぶ。"""
+
+    def __init__(self, names, on_pick):
+        super().__init__(timeout=300)
+        for name in names:
+            b = discord.ui.Button(label=name, style=discord.ButtonStyle.secondary)
+            b.callback = self._cb(name, on_pick)
+            self.add_item(b)
+
+    @staticmethod
+    def _cb(name, on_pick):
+        async def cb(interaction):
+            await on_pick(interaction, name)
+        return cb
 
 
 class Gateway(discord.Client):
@@ -117,20 +153,23 @@ class Gateway(discord.Client):
 
     # --- 評価（右クリックメニュー → 本人にしか見えない画面）-----------------------------------
     async def rate(self, interaction, message: discord.Message):
-        gw = self
+        text = self.describe(message)
+        rec = {"message_id": str(message.id), "channel": str(message.channel.id), "text": text,
+               "is_me": message.author == self.user,
+               "msg_at": message.created_at.astimezone().replace(tzinfo=None).isoformat(timespec="seconds")}
 
-        class Form(discord.ui.Modal, title="評価"):
-            label = discord.ui.TextInput(label="自然／流れとズレてる／キャラじゃない／バグ", max_length=20)
-            comment = discord.ui.TextInput(label="ひと言（空欄でよい）", style=discord.TextStyle.paragraph,
-                                           required=False, max_length=300)
+        async def pick_label(inter, label):
+            r = {**rec, "label": label}
+            details = DETAILS.get(label)
+            if not details:
+                await inter.response.send_modal(CommentModal(r, self.agent))
+                return
 
-            async def on_submit(self, inter):
-                await inter.response.send_message("記録しました", ephemeral=True)
-                rec = {"message_id": str(message.id), "channel": str(message.channel.id), "text": gw.describe(message),
-                       "is_me": message.author == gw.user, "label": str(self.label), "comment": str(self.comment),
-                       "rater": inter.user.display_name,
-                       "at": discord.utils.utcnow().astimezone().replace(tzinfo=None).isoformat(timespec="seconds"),
-                       "msg_at": message.created_at.astimezone().replace(tzinfo=None).isoformat(timespec="seconds")}
-                await gw.agent.rate(rec)
+            async def pick_detail(inter2, detail):
+                await inter2.response.send_modal(CommentModal({**r, "detail": detail}, self.agent))
+            await inter.response.edit_message(content=f"> {text[:80]}\n「{label}」の中身はどれ？\n"
+                                                      f"-# {DETAIL_HELP.get(label, '')}",
+                                              view=ChoiceView(details, pick_detail))
 
-        await interaction.response.send_modal(Form())
+        await interaction.response.send_message(f"> {text[:80]}\nこの発言はどうだった？（あなたにしか見えません）",
+                                                view=ChoiceView(LABELS, pick_label), ephemeral=True)

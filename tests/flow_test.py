@@ -225,6 +225,19 @@ class FlowTest(unittest.TestCase):
         asyncio.run(go())
         self.assertEqual(s.sent, [(COMPARE, ["-# [寝ろ](<https://d/2>)\n俺も"], None)])
 
+    def test_compare_post_failure_does_not_stop_tick(self):
+        a, s, clock, hi, _, it = self._compare()
+
+        async def refuse(*args, **kw):
+            raise RuntimeError("403 Missing Permissions")
+        a.sender.send = refuse
+
+        async def go():
+            await a.compare.mine(it, "俺も", clock["t"])
+            await a.compare.tick(clock["t"] + timedelta(minutes=3))   # 例外を外へ出さない
+        asyncio.run(go())
+        self.assertEqual(a.compare.open, {})
+
     def test_compare_when_the_rival_is_silent(self):
         a, s, clock, hi, _, it = self._compare()
 

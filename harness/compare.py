@@ -6,8 +6,11 @@
 config.yaml の compare_with: {id: 本番の Bot の ID, name: 呼び名} があれば、この形で出す。
 同じ発言への返事を待ち合わせ、片方が来なければ「黙っていた」と出す。本番の Bot の分割は1通目だけを見る。
 """
+import logging
 import re
 from datetime import timedelta
+
+log = logging.getLogger("utsuwa")
 
 WAIT_THEIRS = timedelta(minutes=3)    # こちらが書いてから、本番の Bot を待つ
 WAIT_MINE = timedelta(minutes=6)      # 本番の Bot が返してから、こちらを待つ（気付くまでの間の分だけ長い）
@@ -71,5 +74,9 @@ class Compare:
         else:
             head = f"-# {name}は黙っていた（[返信先の発言](<{e['target'].get('url')}>)）"
         me = self.agent.about
-        await self.agent.sender.send(str(self.agent.config.get("compare_channel")),
-                                     [f"{head}\n{e['mine'] or f'（{me}は黙った）'}"], reply_to=None, typing=[0])
+        channel = str(self.agent.config.get("compare_channel"))
+        body = f"{head}\n{e['mine'] or f'（{me}は黙った）'}"
+        try:
+            await self.agent.sender.send(channel, [body], reply_to=None, typing=[0])
+        except Exception as err:   # 投稿の失敗で、1分ごとの処理全体を止めない
+            log.error("比べる用チャンネルに出せない: %s", err)
