@@ -106,6 +106,10 @@ class Persona:
         """自分宛てでも、自分が混ざっている会話でもない発言を、後で読みたいか（好きな相手への言動など）。"""
         return False
 
+    def read_before(self, m, rows):
+        """後で読む時に発言 m の前の会話として渡す発言を選ぶ。rows は直前の発言（古い順）。"""
+        return rows
+
     def read_context(self, item):
         """後で読む時の state の頭に足す行（【発言者】【相手】など）。"""
         return ""

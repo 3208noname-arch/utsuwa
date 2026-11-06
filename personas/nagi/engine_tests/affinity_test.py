@@ -30,6 +30,12 @@ ok(A.judge(0.9, 0.2, 0.1, 0.1, 0.9) == "attack", "本気のけなしは見下し
 ok(not A.ripe(3, timedelta(minutes=2)) and A.ripe(6, timedelta(0)) and A.ripe(0, timedelta(minutes=10)),
    "6件続くか10分経ったら読む")
 
+said = datetime(2026, 11, 6, 11, 21)
+far = {"at": "2026-11-05T20:08:00", "text": "やーいばーか"}
+close = {"at": "2026-11-06T11:00:00", "text": "おはよ"}
+ok(A.near([far, close], said) == [close], "30分以上前の発言は別の会話として外す")
+ok(A.near([{"text": "時刻なし"}], said) == [], "時刻の無い発言は入れない")
+
 # 増減
 s = {}
 p = A.get(s, 1, "ミナ", T)

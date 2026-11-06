@@ -139,7 +139,8 @@ class Agent:
         recent = list(conv.recent)
         if (m.get("mentions_me") or m.get("to_me") or any(x.get("me") for x in recent[-NEAR_N:])
                 or self.persona.wants_read(m, recent)):
-            self.reading.append({"channel": ch, "message": m, "before": recent[-7:-1], "after": [], "at": self.now()})
+            self.reading.append({"channel": ch, "message": m, "before": self.persona.read_before(m, recent[-7:-1]),
+                                 "after": [], "at": self.now()})
         self.batches.setdefault(ch, []).append(m)
         loop = asyncio.get_running_loop()
         self.last_at[ch] = loop.time()      # 静けさは実際に経った秒で数える（会話の時刻とは別）

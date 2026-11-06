@@ -144,6 +144,13 @@ class NagiFeelingsTest(unittest.TestCase):
         self.a, self.clock = make(datetime(2026, 11, 10, 15, 0))
         self.p = self.a.persona
 
+    def test_questions_read_only_the_message(self):
+        """問いは本体の見出し（【読む発言】【前の会話】）を指し、見下しは見下す言葉を求める。"""
+        qs = self.p.read_questions(read_item(self.a, "今なにしてんの", to_me=True))
+        for k in ("attack", "tease", "support", "joke", "belittle"):
+            self.assertIn("【読む発言】そのものについて答える。【前の会話】の発言は判定に数えない。", qs[k]["instructions"])
+        self.assertIn("見下す言葉が無ければ当てはまらない。", qs["belittle"]["instructions"])
+
     def test_attack_angers_lowers_like_and_mood_then_apology(self):
         it = read_item(self.a, "ほんと使えねえなおめえ", to_me=True)
         qs = ask(self.a, it, {"attack": 0.95, "tease": 0.1, "support": 0.0, "joke": 0.1, "belittle": 0.2})
@@ -207,6 +214,28 @@ class NagiFeelingsTest(unittest.TestCase):
 
 
 class NagiThroughAgentTest(unittest.TestCase):
+    def test_old_talk_stays_out_of_the_read(self):
+        """30分以上前の発言は、後で読む時の【前の会話】に入らない。"""
+        a, clock = make(datetime(2026, 11, 6, 11, 21))
+        a.jev.rule = lambda s, n, q: 0.0 if q["type"] == "noul" else None
+        rows = [("2026-11-05T20:08:00", "やーいばーか"), ("2026-11-06T11:00:00", "おはよ")]
+        a.conv("100000000000000001").recent.extend(
+            {"id": str(i), "at": at, "channel": "100000000000000001", "author": "ミナ", "author_id": "u-ミナ",
+             "bot": False, "me": False, "text": x} for i, (at, x) in enumerate(rows))
+        m = {"id": "9", "at": clock["t"].isoformat(timespec="seconds"), "channel": "100000000000000001",
+             "author": "ミナ", "author_id": "u-ミナ", "bot": False, "me": False, "text": "今なにしてんの", "to_me": True}
+        async def go():
+            a.quiet_sec = 0.05
+            a.persona.choose = lambda scene: "none"
+            await a.on_message(m)
+            await asyncio.sleep(0.2)
+            clock["t"] += timedelta(minutes=11)
+            await a.tick()
+        asyncio.run(go())
+        state = next(c[0] for c in a.jev.calls if "attack" in c[1])
+        self.assertIn("おはよ", state)
+        self.assertNotIn("やーいばーか", state)
+
     def test_read_goes_through_one_jev_call(self):
         """本体の「後で読む」から、記録するかと好感度・怒りが、Jev の同じ1回で読まれる。"""
         a, clock = make(datetime(2026, 11, 10, 15, 0))

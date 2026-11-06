@@ -22,6 +22,7 @@ TRUE = 0.70                # Jev をこれ以上で真と読む
 TEASE_MAX = 0.50           # いじり・冗談がこれ以上なら、けなしとも本心の褒めとも読まない
 AFTER_N = 6                # 判定する発言の後、これだけ続いたら読む
 AFTER_WAIT = timedelta(minutes=10)   # 続かなくても、これだけ経ったら読む
+BEFORE_GAP = timedelta(minutes=30)   # 判定する発言よりこれ以上前の発言は、別の会話として文脈に入れない
 CHAT_PLUS, CHAT_PER_DAY = 1.0, 3
 KEEP = timedelta(days=14)
 KEEP_N = 10
@@ -70,6 +71,11 @@ def judge(attack, tease, support, joke=None, belittle=None):
 def ripe(after_n, waited):
     """後回しにした発言を、もう読んでよいか。after_n はその後に続いた発言数、waited は経った時間。"""
     return after_n >= AFTER_N or waited >= AFTER_WAIT
+
+
+def near(before, said):
+    """直前の発言のうち、判定する発言と同じ会話と言えるものだけを残す（Jev には時刻が見えないので、ここで切る）。"""
+    return [x for x in before if x.get("at") and said - datetime.fromisoformat(x["at"]) < BEFORE_GAP]
 
 
 def relation(v):
