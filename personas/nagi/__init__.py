@@ -19,6 +19,7 @@ import random
 import re
 from datetime import datetime, timedelta
 
+from harness import promises
 from harness.api import choice, noul
 from harness.persona import Persona, Presence
 from personas.nagi.engine import affinity, anger, body, decide, mood, names, policy, topics
@@ -538,9 +539,36 @@ class Nagi(Persona):
                            if not x.get("me") and not x.get("bot")})
         if speakers:
             qs["by"] = choice("話し手に奢ってくれたのは誰か。", {s: f"{s}が奢った" for s in speakers} | {"なし": "奢ってもらっていない"})
+        qs.update(self.promise_questions(texts, speakers))
         return qs
 
+    def promise_questions(self, texts, speakers):
+        """約束・宣言の台帳に足すかの問い。どの1通か、誰に向けてか、は当たった時だけ使う。"""
+        qs = {"promise": noul("【あなた】の発言は、話し手が誰かに「やる」と約束している（「今度奢る」「返す」）か。"
+                              "冗談、一般論、すでにやったことは当てはまらない。"),
+              "declare": noul("【あなた】の発言は、話し手が自分の行動を「減らす」「やめる」「早めにする」など、"
+                              "これからは変えると宣言している（決意を口にしている）か。")}
+        if len(texts) > 1:
+            qs["which"] = choice("約束・宣言を言っているのは、【あなた】の発言のどの1通か。",
+                                 {str(i): x[:40] for i, x in enumerate(texts)})
+        if speakers:
+            qs["to"] = choice("約束・宣言の相手は誰か。", {s: f"{s}に向けて言っている" for s in speakers} | {"なし": "特定の相手はいない"})
+        return qs
+
+    def keep_promise(self, texts, a):
+        """当たれば台帳に足す（同じ内容・同じ相手は足さない）。"""
+        p, d = a.get("promise", 0), a.get("declare", 0)
+        if max(p, d) < decide.INTEREST_TRUE:
+            return
+        i = a.get("which", ("0",))[0]
+        text = texts[int(i)] if str(i).isdigit() and int(i) < len(texts) else texts[0]
+        who = a.get("to", ("なし",))[0]
+        today = self.agent.now().date()
+        promises.add(promises.ledger(self.agent), text, "" if who == "なし" else who, "約束" if p >= d else "宣言",
+                     today, promises.due_from(text, today))
+
     def on_sent(self, texts, a):
+        self.keep_promise(texts, a)
         t = self.agent.now()
         if a.get("did", 0) >= decide.INTEREST_TRUE:
             y = a.get("yen", ("なし",))[0]

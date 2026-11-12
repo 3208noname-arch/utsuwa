@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 
 import yaml
 
-from harness import __version__, context, digest, night, people, writer
+from harness import __version__, context, digest, night, people, promises, writer
 from harness.api import choice, noul
 from harness.outbox import Intent, Outbox
 from harness.persona import Persona
@@ -369,6 +369,9 @@ class Agent:
         who = people.recall(self.vault, it.target["author"]) if it.target else None
         if who:      # 固定枠。Jev の選択を介さず、返信先の1人分だけ渡す
             s[people.SECTION] = who
+        mine = promises.recall(self, it.target["author"] if it.target else None)
+        if mine:     # 固定枠。未完了の約束・宣言を最大3件（返信先に向けたものを先に）
+            s[promises.SECTION] = mine
         s.update(self.persona.inner(t, it.target))
         return s, lines
 
