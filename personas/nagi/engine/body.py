@@ -217,6 +217,8 @@ def did(b, t, what, yen=0, ate=False, treat=False):
     treat は人に奢ってもらった（0円。1日 TREATS_PER_DAY 回まで。友人の案「奢られるシステムが無い」10-14）。"""
     if b["asleep"] or not what:
         return None
+    if not treat and b["money"] <= 0 and (ate or yen > 0):
+        return None     # 残高0では買えないし食べられない。お金を使わない行動は残高と関係なく出来事になる
     if treat:
         tr = b.get("treats") or {}
         if tr.get("day") != _day(t):
@@ -266,7 +268,8 @@ def wallet(b, t):
     if b["money"] < BROKE:
         return f"金欠（残り{b['money']:,}円）"
     left = max(0, int(allowance(b, t) - spent_today(b, t)))
-    return f"残高 約{round(b['money'], -3):,}円（今日あと{round(left, -2):,}円くらい使ってよい）"
+    # 金額は1文に1つだけ。2つ並べると、日割り額を残高と読み違えた（2026-11-06 の評価）
+    return f"残高は約{round(b['money'], -3):,}円ある。今日あと使ってよいのは{round(left, -2):,}円くらい"
 
 
 def as_feelings(b, t):

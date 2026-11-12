@@ -53,6 +53,34 @@ class WriterTest(unittest.TestCase):
                                        a.persona.guards()))
         self.assertEqual(out, ["うん知ってる"])
 
+    def test_stray_number_candidate_is_dropped(self):
+        """節と会話に無い金額を言う案は落とし、残りの案から選ぶ。全案なら書き直して黙る。"""
+        a, _, _ = make(pov_ok, FakeLLM([cands("あと3000円しかない", "うん知ってる")]))
+        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards()))
+        self.assertEqual(out, ["うん知ってる"])
+        a, _, _ = make(pov_ok, FakeLLM([cands("あと3000円しかない"), cands("あと5000円しかない")]))
+        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards()))
+        self.assertIsNone(out)
+        self.assertEqual(len(a.llm.calls), 2)
+
+    def test_pick_retried_once_on_jev_failure(self):
+        """Jev が1回だけ失敗しても、同じ案で判定をやり直せば書き直さずに選べる。"""
+        calls = {"n": 0}
+        def flaky(s, n, q):
+            calls["n"] += 1
+            return None if calls["n"] <= 3 else 0.9
+        a, _, _ = make(flaky, FakeLLM([cands("うん", "そうだね", "まあね")]))
+        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards()))
+        self.assertIsNotNone(out)
+        self.assertEqual(len(a.llm.calls), 1)
+
+    def test_jev_failure_is_not_fail_open(self):
+        """Jev が答えられない時は、最初の案を素通しせず、1回書き直してから黙る。"""
+        a, _, _ = make(None, FakeLLM([cands("うん"), cands("うん")]))
+        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards()))
+        self.assertIsNone(out)
+        self.assertEqual(len(a.llm.calls), 2)
+
     def test_rewrite_once_then_give_up(self):
         a, _, _ = make(pov_ok, FakeLLM([cands("はいそうです"), cands("ありがとうございます")]))
         out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards()))
@@ -342,3 +370,30 @@ class FlowTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class NumberCheckTest(unittest.TestCase):
+    def test_stray_amount(self):
+        allowed = "【体の状態】けっこう眠い／財布: 残高は約48,000円ある。今日あと使ってよいのは2,100円くらい"
+        self.assertEqual(writer.stray_numbers(["残り予算あと2100円だから"], allowed), [])
+        self.assertEqual(writer.stray_numbers(["あと3000円しかない"], allowed), ["3000"])
+
+    def test_stray_time(self):
+        allowed = "【今】11月8日（土）の夕方 16:42\n［3分前］ポン酢: 16時に寝るってなんだよ"
+        self.assertEqual(writer.stray_numbers(["10時半"], allowed), ["10:30"])
+        self.assertEqual(writer.stray_numbers(["16時には寝ない"], allowed), [])
+
+    def test_duration_is_not_a_clock_time(self):
+        allowed = "【直近の会話】ポン酢: 3時間も寝てたのか"
+        self.assertEqual(writer.stray_numbers(["3時に寝る"], allowed), ["3:00"])
+        self.assertEqual(writer.stray_numbers(["3時間起きてた"], allowed), [])
+
+    def test_man_yen_and_pm(self):
+        allowed = "【今】11月12日（木）の昼 15:04\n【体の状態】財布: 残高は約48,000円ある"
+        self.assertEqual(writer.stray_numbers(["午後3時か"], allowed), [])
+        self.assertEqual(writer.stray_numbers(["4万8000円ある"], allowed), [])
+        self.assertEqual(writer.stray_numbers(["5万円ある"], allowed), ["50000"])
+
+    def test_lesson_range_is_allowed(self):
+        allowed = "【覚えていること】- エナドリは200〜300円、水は80〜100円程度"
+        self.assertEqual(writer.stray_numbers(["エナドリは300円する"], allowed), [])

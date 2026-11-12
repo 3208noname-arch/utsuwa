@@ -118,7 +118,7 @@ ok(not ev and b["hunger"] > 75, "カップ麺も買えなければ食べられ�
 
 # 財布
 b = B.new(D17); b["money"] = 52700; b["paid"] = b["sent"] = b["billed"] = D17.strftime("%Y-%m")
-ok(B.wallet(b, D17) == "残高 約53,000円（今日あと6,600円くらい使ってよい）", "残高はいつも丸めて渡す")
+ok(B.wallet(b, D17) == "残高は約53,000円ある。今日あと使ってよいのは6,600円くらい", "残高と今日の上限は別の文で渡す")
 b["money"] = 1500
 ok(B.wallet(b, D17) == "金欠（残り1,500円）", "金欠ならそう言う")
 
@@ -144,6 +144,10 @@ ok(B.did(b, T, "クレーンゲーム", 1000) == "クレーンゲーム（1,000�
 b = B.new(T); b["money"] = 500; b["hunger"] = 70
 ok(B.did(b, T, "ラーメン", 900, ate=True) == "ラーメン（500円）" and b["money"] == 0 and b["hunger"] == 0,
    "食べたら空腹が戻る。残高より多くは使えない")
+b = B.new(T); b["money"] = 0; b["hunger"] = 70
+ok(B.did(b, T, "ラーメン", 900, ate=True) is None and b["hunger"] == 70, "残高0では、言っただけでは食べたことにならない")
+b = B.new(T); b["money"] = 0
+ok(B.did(b, T, "散歩") == "散歩", "残高0でも、お金を使わない行動は出来事になる")
 b = B.new(T); b["money"] = 9000
 B.did(b, T, "服", 8000)
 ok(b["money"] == 6000, "1回の出費は上限で切る")
