@@ -15,6 +15,7 @@ config.yaml の `night.write` が false の間は、2で何を古いにするか
 `night.parts`（diary・lessons・people・digest・promises）に書いた部品だけは、write に関係なくその値が優先する。
 書かなかった部品は write に従う（日記だけは従来どおり、parts に false と書かない限り書く）。
 夜の実行ごとに、部品ごとの生成数・保存数・見送り数を `03 Logs/night/YYYY-MM-DD.json` に残す（write の設定に関係なく）。
+部品の1つが例外を出しても、残りの部品と夜の報告は続ける。失敗した部品は件数を0にし、報告の `errors` に例外を残す。
 """
 import json
 import logging
@@ -102,8 +103,9 @@ def count(made, saved):
     return {"generated": made, "saved": saved, "skipped": made - saved}
 
 
-def report(agent, day, cfg, parts_on, counts, n_other):
-    """夜の報告を `03 Logs/night/日付.json` に足す（同じ日に何度回しても runs に積む）。"""
+def report(agent, day, cfg, parts_on, counts, n_other, errors=None):
+    """夜の報告を `03 Logs/night/日付.json` に足す（同じ日に何度回しても runs に積む）。
+    errors は、例外で失敗した部品 {部品名: "例外の種類: 文"}。失敗が無ければ空。"""
     rel = f"03 Logs/night/{day.isoformat()}.json"
     try:
         data = json.loads(agent.vault.text(rel)) if agent.vault.exists(rel) else {}
@@ -111,7 +113,8 @@ def report(agent, day, cfg, parts_on, counts, n_other):
         data = {}
     data["date"] = day.isoformat()
     data.setdefault("runs", []).append({"at": agent.now().isoformat(timespec="seconds"), "write": bool(cfg.get("write")),
-                                       "parts_on": parts_on, "parts": counts, "other": n_other})
+                                       "parts_on": parts_on, "parts": counts, "other": n_other,
+                                       "errors": errors or {}})
     agent.vault.write_text(rel, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
     return rel
 
@@ -151,19 +154,37 @@ async def run(agent, t: datetime):
     cfg = agent.config.get("night") or {}
     on = {k: part_on(cfg, k) for k in PARTS}
     day = (t - timedelta(days=1)).date() if t.hour < 12 else t.date()
-    done = await tidy(agent, day, write=on["lessons"])
-    n_other = count_other(agent)
+    errors = {}
+
+    async def part(name, work, default):
+        """部品を1つ動かす。例外は受けて報告に残し、残りの部品と夜の報告を続ける。"""
+        try:
+            return await work()
+        except Exception as e:
+            log.exception("夜の整理: 部品 %s に失敗", name)
+            errors[name] = f"{type(e).__name__}: {e}"
+            return default
+
+    async def other():
+        return count_other(agent)
+
+    async def write_diary():
+        events, learned, mine = agent.day_material(day)
+        body = await diary_draft(agent, day, events, learned, mine)
+        if body and on["diary"]:
+            diary_save(agent, day, body)
+        elif body:
+            log.info("日記の案（ログだけ）: %s\n%s", day, body)
+        return body
+
+    done = await part("lessons", lambda: tidy(agent, day, write=on["lessons"]), [])
+    n_other = await part("lessons", other, 0)
     if n_other > OTHER_ALERT:
         agent.notify(f"「その他」の記憶が{n_other}件になった。新しい種類を作るか見てほしい")
-    events, learned, mine = agent.day_material(day)
-    body = await diary_draft(agent, day, events, learned, mine)
-    if body and on["diary"]:
-        diary_save(agent, day, body)
-    elif body:
-        log.info("日記の案（ログだけ）: %s\n%s", day, body)
-    met = await people.update(agent, day, write_=on["people"])
-    kept = await promises.update(agent, day, write_=on["promises"])
-    gist = await digest.update(agent, day, write_=on["digest"])
+    body = await part("diary", write_diary, None)
+    met = await part("people", lambda: people.update(agent, day, write_=on["people"]), [])
+    kept = await part("promises", lambda: promises.update(agent, day, write_=on["promises"]), [])
+    gist = await part("digest", lambda: digest.update(agent, day, write_=on["digest"]), [])
     counts = {
         "diary": count(int(bool(body)), int(bool(body and on["diary"]))),
         "lessons": count(len(done), len(done) if on["lessons"] else 0),
@@ -171,5 +192,6 @@ async def run(agent, t: datetime):
         "digest": count(len(gist), sum(1 for x in gist if x[-1])),
         "promises": count(len(kept), sum(1 for x in kept if x[-1])),
     }
-    report(agent, day, cfg, on, counts, n_other)
-    return {"tidied": done, "other": n_other, "people": met, "promises": kept, "digest": gist, "counts": counts}
+    report(agent, day, cfg, on, counts, n_other, errors)
+    return {"tidied": done, "other": n_other, "people": met, "promises": kept, "digest": gist, "counts": counts,
+            "errors": errors}

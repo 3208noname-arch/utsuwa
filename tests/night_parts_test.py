@@ -3,8 +3,9 @@ import asyncio
 import json
 import unittest
 from datetime import date, datetime
+from unittest.mock import patch
 
-from harness import digest, night, promises
+from harness import digest, night, people, promises
 from tests.fakes import FakeJev, FakeLLM
 from tests.digest_test import ANSWER as DIGEST_ANSWER
 from tests.people_test import ANSWER as PEOPLE_ANSWER, with_chat
@@ -109,12 +110,52 @@ class ReportTest(unittest.TestCase):
         self.assertEqual(len(rep["runs"]), 2)
         self.assertEqual(rep["runs"][1]["parts"]["diary"]["generated"], 0)     # 日記は既にある
 
+    def test_no_errors_when_all_parts_work(self):
+        a, out, rep = run_night({"write": True})
+        self.assertEqual(rep["runs"][0]["errors"], {})
+        self.assertEqual(out["errors"], {})
+
     def test_nothing_to_do_gives_zero_counts(self):
         a = make()
         a.llm = FakeLLM([])
         asyncio.run(night.run(a, NIGHT))
         c = json.loads(a.vault.text(REPORT))["runs"][0]["parts"]
         self.assertTrue(all(v == {"generated": 0, "saved": 0, "skipped": 0} for v in c.values()))
+
+
+class FailureTest(unittest.TestCase):
+    """部品の1つが例外を出しても、残りの部品と夜の報告は続く。"""
+    ZERO = {"generated": 0, "saved": 0, "skipped": 0}
+
+    def run_with_broken(self, target, name):
+        a = build({"write": True})
+        with patch.object(target, name, side_effect=RuntimeError("落ちた")), self.assertLogs("utsuwa", "ERROR"):
+            out = asyncio.run(night.run(a, NIGHT))
+        return a, out, json.loads(a.vault.text(REPORT))["runs"][0]
+
+    def test_one_broken_part_does_not_stop_the_rest(self):
+        for part, (target, name) in {"people": (people, "update"), "promises": (promises, "update"),
+                                     "digest": (digest, "update"), "lessons": (night, "tidy"),
+                                     "diary": (night, "diary_draft")}.items():
+            a, out, run1 = self.run_with_broken(target, name)
+            self.assertEqual(written(a), {**dict.fromkeys(ALL, True), part: False}, part)
+            self.assertEqual(run1["errors"], {part: "RuntimeError: 落ちた"}, part)
+            self.assertEqual(out["errors"], {part: "RuntimeError: 落ちた"}, part)
+            self.assertEqual(run1["parts"][part], self.ZERO, part)
+            for k in ALL:
+                if k != part:
+                    self.assertGreaterEqual(run1["parts"][k]["saved"], 1, (part, k))
+
+    def test_all_broken_still_reports(self):
+        a = build({"write": True})
+        with patch.object(people, "update", side_effect=RuntimeError("a")), \
+             patch.object(promises, "update", side_effect=ValueError("b")), \
+             patch.object(digest, "update", side_effect=KeyError("c")), self.assertLogs("utsuwa", "ERROR"):
+            asyncio.run(night.run(a, NIGHT))
+        run1 = json.loads(a.vault.text(REPORT))["runs"][0]
+        self.assertEqual(set(run1["errors"]), {"people", "promises", "digest"})
+        self.assertEqual(run1["errors"]["promises"], "ValueError: b")
+        self.assertEqual(run1["parts"]["diary"]["saved"], 1)
 
 
 if __name__ == "__main__":
