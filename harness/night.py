@@ -12,7 +12,11 @@
 6'. 約束・宣言の台帳を更新する：期限切れの未完了は「流れた」（コード）、その日に果たした分は「済み」（Jev。harness/promises.py）
 
 config.yaml の `night.write` が false の間は、2で何を古いにするか、5と6と台帳で何を書くかをログに出すだけで書き換えない。
+`night.parts`（diary・lessons・people・digest・promises）に書いた部品だけは、write に関係なくその値が優先する。
+書かなかった部品は write に従う（日記だけは従来どおり、parts に false と書かない限り書く）。
+夜の実行ごとに、部品ごとの生成数・保存数・見送り数を `03 Logs/night/YYYY-MM-DD.json` に残す（write の設定に関係なく）。
 """
+import json
 import logging
 from datetime import datetime, timedelta
 from itertools import combinations
@@ -83,12 +87,41 @@ async def tidy(agent, today, write=False):
     return done
 
 
+PARTS = ("diary", "lessons", "people", "digest", "promises")
+
+
+def part_on(cfg, name):
+    """部品 name を書くか。parts に書いてあればその値、無ければ write に従う（日記だけは既定で書く）。"""
+    parts = cfg.get("parts") or {}
+    if name in parts:
+        return bool(parts[name])
+    return True if name == "diary" else bool(cfg.get("write"))
+
+
+def count(made, saved):
+    return {"generated": made, "saved": saved, "skipped": made - saved}
+
+
+def report(agent, day, cfg, parts_on, counts, n_other):
+    """夜の報告を `03 Logs/night/日付.json` に足す（同じ日に何度回しても runs に積む）。"""
+    rel = f"03 Logs/night/{day.isoformat()}.json"
+    try:
+        data = json.loads(agent.vault.text(rel)) if agent.vault.exists(rel) else {}
+    except ValueError:
+        data = {}
+    data["date"] = day.isoformat()
+    data.setdefault("runs", []).append({"at": agent.now().isoformat(timespec="seconds"), "write": bool(cfg.get("write")),
+                                       "parts_on": parts_on, "parts": counts, "other": n_other})
+    agent.vault.write_text(rel, json.dumps(data, ensure_ascii=False, indent=2) + "\n")
+    return rel
+
+
 def count_other(agent):
     return sum(1 for r in lesson_rows(agent.vault) if r.kind == "その他")
 
 
-async def diary(agent, day, events, learned, mine):
-    """その日の日記。材料にあることだけを書かせる。書けたら rel。"""
+async def diary_draft(agent, day, events, learned, mine):
+    """その日の日記の本文を作る。材料にあることだけを書かせる。既にある日・書けなかった日は None。"""
     rel = f"00 Diary/{day.isoformat()}.md"
     if agent.vault.exists(rel):
         return None
@@ -97,25 +130,46 @@ async def diary(agent, day, events, learned, mine):
             "\n【自分が言ったこと】\n" + ("\n".join(f"- {x}" for x in mine) or "（無し）"))
     text = await agent.llm.chat([{"role": "system", "content": agent.vault.text("Agents/RECORDER.md")},
                                  {"role": "user", "content": user}], temperature=0.7)
-    body = str(loads(text).get("body") or "").strip()
-    if not body:
-        return None
+    return str(loads(text).get("body") or "").strip() or None
+
+
+def diary_save(agent, day, body):
+    rel = f"00 Diary/{day.isoformat()}.md"
     agent.vault.write_note(rel, {"date": day, "種類": "日記", "status": "active"}, body)
     log.info("日記を書いた: %s", rel)
     return rel
 
 
+async def diary(agent, day, events, learned, mine):
+    """その日の日記を書く。書けたら rel。"""
+    body = await diary_draft(agent, day, events, learned, mine)
+    return diary_save(agent, day, body) if body else None
+
+
 async def run(agent, t: datetime):
     """夜の整理を1回。"""
     cfg = agent.config.get("night") or {}
+    on = {k: part_on(cfg, k) for k in PARTS}
     day = (t - timedelta(days=1)).date() if t.hour < 12 else t.date()
-    done = await tidy(agent, day, write=bool(cfg.get("write")))
+    done = await tidy(agent, day, write=on["lessons"])
     n_other = count_other(agent)
     if n_other > OTHER_ALERT:
         agent.notify(f"「その他」の記憶が{n_other}件になった。新しい種類を作るか見てほしい")
     events, learned, mine = agent.day_material(day)
-    await diary(agent, day, events, learned, mine)
-    met = await people.update(agent, day, write_=bool(cfg.get("write")))
-    kept = await promises.update(agent, day, write_=bool(cfg.get("write")))
-    gist = await digest.update(agent, day, write_=bool(cfg.get("write")))
-    return {"tidied": done, "other": n_other, "people": met, "promises": kept, "digest": gist}
+    body = await diary_draft(agent, day, events, learned, mine)
+    if body and on["diary"]:
+        diary_save(agent, day, body)
+    elif body:
+        log.info("日記の案（ログだけ）: %s\n%s", day, body)
+    met = await people.update(agent, day, write_=on["people"])
+    kept = await promises.update(agent, day, write_=on["promises"])
+    gist = await digest.update(agent, day, write_=on["digest"])
+    counts = {
+        "diary": count(int(bool(body)), int(bool(body and on["diary"]))),
+        "lessons": count(len(done), len(done) if on["lessons"] else 0),
+        "people": count(len(met), sum(1 for x in met if x[-1])),
+        "digest": count(len(gist), sum(1 for x in gist if x[-1])),
+        "promises": count(len(kept), sum(1 for x in kept if x[-1])),
+    }
+    report(agent, day, cfg, on, counts, n_other)
+    return {"tidied": done, "other": n_other, "people": met, "promises": kept, "digest": gist, "counts": counts}

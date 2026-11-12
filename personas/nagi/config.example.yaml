@@ -32,6 +32,11 @@ kinds:
 night:
   hour: 4
   write: false
+  # 部品ごとのスイッチ。書いた部品だけ write より優先する（書かなければ write に従う。日記だけは既定で書く）。
+  # 部品: diary（日記）、lessons（教わったことの整理）、people（人物）、digest（近況）、promises（約束の台帳）
+  # 有効化の順の目安: promises → digest → people。夜の報告は 03 Logs/night/日付.json
+  # parts:
+  #   promises: true
 
 start_topics: true
 
