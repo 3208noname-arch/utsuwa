@@ -39,6 +39,7 @@ class Row:
     words: list = field(default_factory=list)
     scene: str = ""
     body: str = ""
+    p: float = field(default=0.0, compare=False)    # 選ぶ時の Jev の行確率（薄れ層が読む。選び方には使わない）
 
     def line(self):
         s = f"{self.name}｜種類: {self.kind}"
@@ -169,6 +170,8 @@ async def select(jev, vault, convo_text, about, today: date, kinds_about=None, k
     q2 = {f"r{i}": noul(f"記憶の表の {i} 番は、{about}がこの会話の最後の発言に返事を書く時に関係するか。")
           for i in range(len(cand))}
     a2 = await jev.ask(state, q2)
+    for i, r in enumerate(cand):
+        r.p = a2.get(f"r{i}", 0)
     scored = pick_rows([(a2.get(f"r{i}", 0), r) for i, r in enumerate(cand)])
     picked, chars = [], 0
     for _, r in scored:
