@@ -42,26 +42,35 @@ class ContextTest(unittest.TestCase):
         self.assertNotIn("出どころ", table)                 # 会話用には「評価」という語を見せない
         self.assertEqual(len(jev.calls), 2)                 # Jev は2回だけ
 
-    def test_kinds_or_of_full_text_and_brief(self):
-        """聞き方A（会話全体）かB（短い材料）のどちらかで閾値を超えた種類を通す。Bが無ければ聞かない。"""
+    def test_kinds_by_rank(self):
+        """種類は順位方式：1位は下限以上なら通す。1位との差が KIND_GAP 以内なら通す。最大2つ。"""
+        pk = context.pick_kinds
+        self.assertEqual(pk({"a": 0.45, "b": 0.40, "c": 0.36}), {"a", "b"})    # 3位は差0.09でも最大2つ
+        self.assertEqual(pk({"a": 0.45, "b": 0.30, "c": 0.1}), {"a"})          # 差が大きい
+        self.assertEqual(pk({"a": 0.19, "b": 0.18}), set())                    # 1位が下限未満
+        self.assertEqual(pk({"a": 0.2, "b": 0.1}), {"a", "b"})                 # 境界
+        self.assertEqual(pk({}), set())
+
+    def test_rows_by_rank_per_kind(self):
+        """行は種類ごとに、1位から ROW_GAP 以内かつ ROW_FLOOR 以上、最大3行。1位が下限未満の種類は通さない。"""
+        R = lambda n, k: context.Row(n, k, n, "")
+        got = context.pick_rows([(0.74, R("a1", "X")), (0.57, R("a2", "X")), (0.50, R("a3", "X")),
+                                 (0.66, R("a4", "X")), (0.72, R("a5", "X")),
+                                 (0.29, R("b1", "Y")), (0.1, R("b2", "Y")),
+                                 (0.35, R("c1", "Z")), (0.30, R("c2", "Z"))])
+        self.assertEqual([r.name for _, r in got], ["a1", "a5", "a4", "c1", "c2"])   # X は上位3行（a2 は4位）、Y は全滅
+
+    def test_select_rank_pipeline(self):
+        """絶対閾値では通らない確率（0.4 前後）でも、順位で通る。聞き方は会話全体の1回だけ。"""
         def rule(state, name, q):
             if name.startswith("k"):
-                text = q["instructions"]
-                if state.startswith("ミナの発言"):                      # B: 短い材料では「常識」だけ通す
-                    return 0.9 if "「常識」" in text else 0.1
-                return 0.9 if "「スマホのメモ」" in text else 0.1       # A: 会話全体ではメモだけ通す
-            return 0.2
+                return 0.4 if "「スマホのメモ」" in q["instructions"] else 0.1
+            return 0.5
         jev = FakeJev(rule)
-        brief = context.make_brief("コーヒーいくら？", "ミナ", "コーヒー")
-        _, _, stats = run(context.select(jev, Vault(copy_template()), "ミナ: x", "あかり", date(2026, 11, 4),
-                                         brief=brief))
-        self.assertEqual(stats["kinds"], ["スマホのメモ", "常識"])
-        self.assertEqual(len(jev.calls), 3)                              # A、B、行の段
-        self.assertEqual(jev.calls[1][0], "ミナの発言: コーヒーいくら？\n今の話題: コーヒー")
-        jev2 = FakeJev(rule)
-        _, _, st2 = run(context.select(jev2, Vault(copy_template()), "ミナ: x", "あかり", date(2026, 11, 4)))
-        self.assertEqual(st2["kinds"], ["スマホのメモ"])                  # brief 無しなら A だけ
-        self.assertEqual(len(jev2.calls), 2)
+        _, picked, stats = run(context.select(jev, Vault(copy_template()), "ミナ: x", "あかり", date(2026, 11, 4)))
+        self.assertEqual(stats["kinds"], ["スマホのメモ"])
+        self.assertEqual(len(jev.calls), 2)
+        self.assertTrue(picked)
 
     def test_kind_question_has_when(self):
         q = context.kind_question("あかり", "常識", {"常識": "事実を教える"}, {"常識": "金額の話が出た時"})

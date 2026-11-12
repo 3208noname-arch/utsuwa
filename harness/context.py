@@ -16,8 +16,13 @@ from harness.api import noul
 
 log = logging.getLogger("utsuwa")
 
-KIND_MIN = 0.5        # 種類を絞る閾値（広めに通し、行の段で絞る）
-ROW_MIN = 0.7         # 行を選ぶ閾値（RustXNG の検証で、正解を落とさなかった値）
+# 順位方式。確率は絶対値では当てにならない（正解の種類でも 0.4 前後）ので、順位と差で通す
+KIND_FLOOR = 0.2      # 種類の1位が通る下限
+KIND_GAP = 0.1        # 1位との差がこれ以内の種類も通す
+MAX_KINDS = 2
+ROW_FLOOR = 0.3       # 行の下限（その種類の1位もこれ以上でなければ通さない）
+ROW_GAP = 0.2         # その種類の1位との差がこれ以内の行を通す
+MAX_ROWS_PER_KIND = 3
 MAX_ROWS = 6
 MAX_CHARS = 600
 DIARY_DAYS = 7
@@ -90,14 +95,28 @@ def _dated(r):
     return f"（{d}）" if d else ""
 
 
-def make_brief(text="", name="", topic=""):
-    """種類の段の聞き方B用の短い材料。返信先の最新の発言・返信先の名前・今の話題から組む。空なら ""。"""
-    parts = []
-    if name or text:
-        parts.append(f"{name}の発言: {text}" if name else f"発言: {text}")
-    if topic:
-        parts.append(f"今の話題: {topic}")
-    return "\n".join(parts)
+def pick_kinds(probs):
+    """{種類: 確率} から順位方式で通す種類の集合。1位は KIND_FLOOR 以上、2位以下は1位との差が KIND_GAP 以内、最大 MAX_KINDS。"""
+    ranked = sorted(probs.items(), key=lambda x: -x[1])
+    if not ranked or ranked[0][1] < KIND_FLOOR:
+        return set()
+    top = ranked[0][1]
+    return {k for k, v in ranked[:MAX_KINDS] if top - v <= KIND_GAP + 1e-9}
+
+
+def pick_rows(scored):
+    """[(確率, 行)] から種類ごとに順位方式で通した [(確率, 行)] を確率の高い順で返す。"""
+    by = {}
+    for v, r in scored:
+        by.setdefault(r.kind, []).append((v, r))
+    out = []
+    for items in by.values():
+        items.sort(key=lambda x: -x[0])
+        top = items[0][0]
+        if top < ROW_FLOOR:
+            continue
+        out += [(v, r) for v, r in items[:MAX_ROWS_PER_KIND] if top - v <= ROW_GAP + 1e-9]
+    return sorted(out, key=lambda x: -x[0])
 
 
 def render(rows):
@@ -129,11 +148,10 @@ def kind_question(about, k, kinds_about, kinds_when):
                 f"{'（' + '。'.join(desc) + '）' if desc else ''}を思い出す必要があるか。")
 
 
-async def select(jev, vault, convo_text, about, today: date, kinds_about=None, kinds_when=None, brief=""):
+async def select(jev, vault, convo_text, about, today: date, kinds_about=None, kinds_when=None):
     """今の会話（convo_text）に関係する記憶を選び、(節, 選んだ行, ログ用の数) を返す。
 
-    種類の段は、会話文全体（聞き方A）と短い材料 brief（聞き方B。空なら聞かない）の両方で聞き、
-    どちらかで KIND_MIN を超えた種類を通す。行の段は会話文全体で聞く。
+    種類の段・行の段とも、会話文全体で聞き、順位方式で通す（定数は上のとおり）。
     """
     rows = lesson_rows(vault) + diary_rows(vault, today)
     if not rows:
@@ -142,10 +160,7 @@ async def select(jev, vault, convo_text, about, today: date, kinds_about=None, k
     kinds_about, kinds_when = kinds_about or {}, kinds_when or {}
     q1 = {f"k{i}": kind_question(about, k, kinds_about, kinds_when) for i, k in enumerate(kinds)}
     a1 = await jev.ask(convo_text, q1)
-    wanted = {k for i, k in enumerate(kinds) if a1.get(f"k{i}", 0) >= KIND_MIN}
-    if brief:
-        b1 = await jev.ask(brief, q1)
-        wanted |= {k for i, k in enumerate(kinds) if b1.get(f"k{i}", 0) >= KIND_MIN}
+    wanted = pick_kinds({k: a1.get(f"k{i}", 0) for i, k in enumerate(kinds)})
     cand = [r for r in rows if r.kind in wanted]
     if not cand:
         return {}, [], {"rows": len(rows), "kinds": sorted(wanted)}
@@ -154,8 +169,7 @@ async def select(jev, vault, convo_text, about, today: date, kinds_about=None, k
     q2 = {f"r{i}": noul(f"記憶の表の {i} 番は、{about}がこの会話の最後の発言に返事を書く時に関係するか。")
           for i in range(len(cand))}
     a2 = await jev.ask(state, q2)
-    scored = sorted(((a2[f"r{i}"], r) for i, r in enumerate(cand) if a2.get(f"r{i}", 0) >= ROW_MIN),
-                    key=lambda x: -x[0])
+    scored = pick_rows([(a2.get(f"r{i}", 0), r) for i, r in enumerate(cand)])
     picked, chars = [], 0
     for _, r in scored:
         if len(picked) >= MAX_ROWS or chars + len(r.body) > MAX_CHARS:

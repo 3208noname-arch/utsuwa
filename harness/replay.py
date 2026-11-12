@@ -80,13 +80,6 @@ def _no_diary(off):
         context.diary_rows = saved
 
 
-def brief_of(rating):
-    """評価の context の最後の1行（返信先の最新の発言）から短い材料を作る。話題は評価に残っていないので付けない。"""
-    lines = rating.get("context") or []
-    who, _, text = (lines[-1] if lines else "").partition(": ")
-    return context.make_brief(text, who) if text else ""
-
-
 class RecordingJev:
     """jev を包み、ask の問いと答えをそのまま記録する（select の挙動は変えない）。答えに無い問いは棄権。"""
 
@@ -100,14 +93,11 @@ class RecordingJev:
 
 
 def probs_of(calls, kinds, cand_rows):
-    """記録から確率を取り出す。None は棄権（B は聞かなかった時も None）。
-    呼び出しの順は select の流れ（種類A → 種類B（brief があれば）→ 行）。"""
+    """記録から確率を取り出す。None は棄権。呼び出しの順は select の流れ（種類 → 行）。"""
     ks = [c for c in calls if next(iter(c[0]), "").startswith("k")]
     rs = [c for c in calls if next(iter(c[0]), "").startswith("r")]
     a = ks[0][1] if ks else {}
-    b = ks[1][1] if len(ks) > 1 else {}
-    out = {"kinds": {k: (a.get(f"k{i}"), b.get(f"k{i}") if len(ks) > 1 else None) for i, k in enumerate(kinds)},
-           "b_asked": len(ks) > 1, "rows": []}
+    out = {"kinds": {k: a.get(f"k{i}") for i, k in enumerate(kinds)}, "rows": []}
     if rs:
         out["rows"] = [(r, rs[0][1].get(f"r{i}")) for i, r in enumerate(cand_rows)]
     return out
@@ -119,7 +109,7 @@ async def replay(jev, vault, ratings, about, kinds_about=None, kinds_when=None, 
     for rt in ratings:
         rec = RecordingJev(jev) if probs else jev
         _, picked, stats = await context.select(rec, vault, convo_text(rt), about, rating_day(rt), kinds_about,
-                                                 kinds_when, brief_of(rt))
+                                                 kinds_when)
         cands = candidates(rows, rt)
         verdict, got = judge(picked, cands)
         results.append({"at": rt.get("at"), "label": rt.get("label"), "comment": rt.get("comment"),
@@ -140,20 +130,22 @@ def _p(v):
 
 
 def report_probs(results):
-    """--probs: 種類の段は 種類×(A, B) と閾値との差、行の段は候補行ごとの確率（正解候補に★、選ばれた行に✔）。"""
+    """--probs: 種類ごとの確率（通ったものに✔）と、候補行ごとの確率（正解候補に★、選ばれた行に✔）。"""
     out = []
     for i, x in enumerate(results, 1):
         pr = x["probs"]
+        passed = set(x["stats"].get("kinds", []))
         out.append(f"{i}. {x['at']} 「{x['label']}」 → {x['verdict']}")
-        out.append(f"   種類の段（閾値 {context.KIND_MIN}。B は{'聞いた' if pr['b_asked'] else '聞かなかった'}）")
-        for k, (a, b) in pr["kinds"].items():
-            d = "".join(f" {n}差{v - context.KIND_MIN:+.3f}" for n, v in (("A", a), ("B", b)) if v is not None)
-            out.append(f"     {k}: A={_p(a)} B={_p(b) if pr['b_asked'] else '-'}{d}")
+        out.append(f"   種類の段（下限 {context.KIND_FLOOR}、差 {context.KIND_GAP}、最大{context.MAX_KINDS}）")
+        for k, v in sorted(pr["kinds"].items(), key=lambda t: -(t[1] if t[1] is not None else -1)):
+            out.append(f"     {'✔' if k in passed else ' '} {_p(v)} {k}")
         if pr["rows"]:
-            out.append(f"   行の段（閾値 {context.ROW_MIN}、★=正解候補 ✔=選ばれた）、確率の高い順")
+            picked = {n for n, _ in x["picked"]}
+            out.append(f"   行の段（下限 {context.ROW_FLOOR}、差 {context.ROW_GAP}、種類ごと最大{context.MAX_ROWS_PER_KIND}。"
+                       "★=正解候補 ✔=選ばれた）")
             for r, v in sorted(pr["rows"], key=lambda t: -(t[1] if t[1] is not None else -1)):
                 star = "★" if r.rel in x["cand_rels"] else " "
-                ok = "✔" if v is not None and v >= context.ROW_MIN else " "
+                ok = "✔" if r.name in picked else " "
                 out.append(f"     {star}{ok} {_p(v)} {r.name}（{r.kind}）")
         else:
             out.append("   行の段: 候補なし（種類で全滅）")

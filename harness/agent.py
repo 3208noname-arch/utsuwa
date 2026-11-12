@@ -379,11 +379,9 @@ class Agent:
         t = self.now()
         s, lines = self.sections(it, t)
         kinds = self.config.get("kinds") or {}
-        tg = it.target or {}
-        brief = context.make_brief(tg.get("text", ""), tg.get("author", ""), self.persona.topic_text(tg.get("text", "")))
         mem, _, stats = await context.select(self.jev, self.vault, lines, self.about, t.date(),
                                              {k: v.get("about", "") for k, v in kinds.items()},
-                                             {k: v.get("when", "") for k, v in kinds.items()}, brief)
+                                             {k: v.get("when", "") for k, v in kinds.items()})
         s.update(mem)
         mine = my_lines(self.convs.values(), t)
         s["あなたが最近言ったこと"] = "\n".join(mine) or "（無し）"
