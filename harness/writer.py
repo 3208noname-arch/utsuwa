@@ -101,15 +101,20 @@ def passes(msgs, guards):
     return not any(g.search(m) for g in guards for m in msgs)
 
 
-async def pick(jev, about, log_lines, mine, cands, recalled=""):
+async def pick(jev, about, log_lines, mine, cands, recalled="", now=""):
     """立場チェック。案ごとの Noul を1回で聞き、閾値を超えた中で一番高い案。
     Jev が失敗したら素通ししない（None を返し、呼び出し側が1回だけ書き直す）。
-    recalled は、この返事を書く時に引いた記憶の節（render 済み）。あれば、それと食い違わないことも見る。"""
+    recalled は、この返事を書く時に引いた記憶の節（render 済み）。あれば、それと食い違わないことも見る。
+    観点「帰属」は【会話】だけで見る。now は【今】の節（日付・曜日・時間帯）で、あれば時間帯の言葉と睡眠の計算も見る。"""
     tail = ("相手の台詞を代わりに言っていない、自分（あなた）の最近の発言や会話の事実と食い違っていない、"
-            "自分の言ったことを相手のせいにしていない。" + ("思い出した記憶と矛盾していない。" if recalled else ""))
+            "自分の言ったことを相手のせいにしていない。"
+            "案が触れている発言・呼びかけ・呼び名について、言った人と宛先が会話の記録と合っている。"
+            + ("思い出した記憶と矛盾していない。" if recalled else "")
+            + ("時間帯の言葉（朝・昼・夕方・夜・深夜）と曜日が【今】と合っている。"
+               "寝る・起きるの話では、時刻の計算（何時に寝て何時間寝たら何時起きる）が【今】の時刻と合っている。" if now else ""))
     qs = {f"c{i}": noul(f"案{i}は、{about}自身の立場から言える発言として筋が通っているか。" + tail)
           for i in range(len(cands))}
-    state = (f"【会話】\n{log_lines}\n【あなたが最近言ったこと】\n" + ("\n".join(mine) or "（無し）") + "\n" +
+    state = ((f"【今】{now}\n" if now else "") + f"【会話】\n{log_lines}\n【あなたが最近言ったこと】\n" + ("\n".join(mine) or "（無し）") + "\n" +
              (f"【思い出した記憶】\n{recalled}\n" if recalled else "") +
              "\n".join(f"【案{i}】\n" + "\n".join(f"あなた: {m}" for m in c) for i, c in enumerate(cands)))
     a = await jev.ask(state, qs)
@@ -143,9 +148,9 @@ async def write(llm, jev, vault, about, sections, kind, guards, reactions=(), mi
                 continue
             ok.append(c)
         if ok:
-            chosen, score = await pick(jev, about, log_lines, mine, ok, recalled_text)
+            chosen, score = await pick(jev, about, log_lines, mine, ok, recalled_text, sections.get("今", ""))
             if chosen is None and score is None:
-                chosen, score = await pick(jev, about, log_lines, mine, ok, recalled_text)   # Jev の一時失敗かもしれないので、同じ案でもう1回だけ
+                chosen, score = await pick(jev, about, log_lines, mine, ok, recalled_text, sections.get("今", ""))   # Jev の一時失敗かもしれないので、同じ案でもう1回だけ
             if chosen:
                 log.info("案%d件（検査を通った%d件）から選んだ（立場 %s）: %s", len(cands), len(ok),
                          None if score is None else round(score, 2), " ｜ ".join(chosen))

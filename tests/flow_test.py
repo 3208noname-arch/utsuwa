@@ -119,6 +119,57 @@ class WriterTest(unittest.TestCase):
         self.assertNotIn("思い出した記憶", state)
         self.assertNotIn("思い出した記憶", json.dumps(qs, ensure_ascii=False))
 
+    def _fact_rule(self):
+        """偽の Jev。帰属・時間帯・睡眠の計算が会話や【今】と合わない案を落とす（問いに観点が入っている時だけ）。"""
+        def rule(state, name, q):
+            if not name.startswith("c"):
+                return None
+            body = state.split(f"【案{name[1:]}】")[1].split("【案")[0]
+            qt = json.dumps(q, ensure_ascii=False)
+            bad = ("言った人と宛先" in qt and "ユウが変な呼び方" in body) or \
+                  ("時間帯の言葉" in qt and "【今】" in state and "土曜夜" in body) or \
+                  ("時刻の計算" in qt and "6時半" in body)
+            return 0.1 if bad else 0.9
+        return rule
+
+    def _run_fact(self, bad, good):
+        a, _, _ = make(self._fact_rule(), FakeLLM([cands(bad, good)]))
+        s = {"今": "11月9日（月）の昼 12:30"}
+        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", s, "normal", a.persona.guards(), log_lines="ユウ: おはよ"))
+        return a, out
+
+    def test_attribution_mismatch_is_dropped(self):
+        a, out = self._run_fact("さっきユウが変な呼び方したよね", "さっき私が変な呼び方したわ")
+        self.assertEqual(out, ["さっき私が変な呼び方したわ"])
+        self.assertIn("言った人と宛先が会話の記録と合っている", json.dumps(a.jev.calls[0][1], ensure_ascii=False))
+
+    def test_daypart_mismatch_is_dropped(self):
+        a, out = self._run_fact("土曜夜は何してんの？", "今日は何してんの？")
+        self.assertEqual(out, ["今日は何してんの？"])
+        self.assertIn("【今】11月9日（月）の昼", a.jev.calls[0][0])
+        self.assertIn("時間帯の言葉", json.dumps(a.jev.calls[0][1], ensure_ascii=False))
+
+    def test_sleep_calc_mismatch_is_dropped(self):
+        a, out = self._run_fact("16時に寝て10時間寝たら6時半だね", "今から寝たら明日の朝には起きるよ")
+        self.assertEqual(out, ["今から寝たら明日の朝には起きるよ"])
+        self.assertIn("時刻の計算", json.dumps(a.jev.calls[0][1], ensure_ascii=False))
+
+    def test_correct_candidate_passes_and_all_bad_goes_silent(self):
+        a, out = self._run_fact("私が言ったのは昼のことだよ", "昼は何食べた？")
+        self.assertEqual(len(out), 1)
+        a, _, _ = make(self._fact_rule(), FakeLLM([cands("土曜夜は何してんの？"), cands("土曜夜は何してんの？")]))
+        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {"今": "月曜の昼"}, "normal", a.persona.guards()))
+        self.assertIsNone(out)
+        self.assertEqual(len(a.llm.calls), 2)
+
+    def test_time_checks_need_now(self):
+        """【今】が sections に無ければ、時間の観点は足さない（帰属は常に足す）。"""
+        a, _, _ = make(self._fact_rule(), FakeLLM([cands("やあ")]))
+        asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards()))
+        qt = json.dumps(a.jev.calls[0][1], ensure_ascii=False)
+        self.assertIn("言った人と宛先", qt)
+        self.assertNotIn("時間帯の言葉", qt)
+
     def test_system_prompt_follows_edits(self):
         """SOUL.md を Obsidian で直したら、次に書く時の system に入る（再起動しない）。"""
         a, _, _ = make()
