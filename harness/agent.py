@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 
 import yaml
 
-from harness import __version__, context, digest, night, people, promises, writer
+from harness import __version__, context, digest, fade, night, people, promises, writer
 from harness.api import choice, noul
 from harness.outbox import Intent, Outbox
 from harness.persona import Persona
@@ -381,11 +381,15 @@ class Agent:
         kinds = self.config.get("kinds") or {}
         if it.source == "reply" and it.kind == "reaction":
             # 絵文字だけの反応には重い想起（Jev の種類・行の選択）をしない。人物・近況・約束の固定枠は上で付いている
-            mem, stats = {}, "想起なし（リアクション）"
+            mem, faded, stats = {}, [], "想起なし（リアクション）"
         else:
-            mem, _, stats = await context.select(self.jev, self.vault, lines, self.about, t.date(),
+            mem, picked, stats = await context.select(self.jev, self.vault, lines, self.about, t.date(),
                                                  {k: v.get("about", "") for k, v in kinds.items()},
                                                  {k: v.get("when", "") for k, v in kinds.items()})
+            # 薄れ層（recall.mode が human の時だけ働く。exact ならそのまま）。固定枠は s に先に入っていて、ここは通らない
+            mem, faded, fstats = fade.apply(mem, picked, self.config, t.date())
+            if fstats:
+                stats = {**stats, "fade": fstats}
         s.update(mem)
         mine = my_lines(self.convs.values(), t)
         s["あなたが最近言ったこと"] = "\n".join(mine) or "（無し）"
@@ -394,7 +398,7 @@ class Agent:
         log.info("節の字数: %s／記憶 %s", {k: len(v) for k, v in s.items()}, stats)
         return await writer.write(self.llm, self.jev, self.vault, self.about, s, it.kind, self.persona.guards(it.target),
                                   self.config.get("reactions") or (), mine, lines, mem,
-                                  drop_stray=self.config.get("number_check") == "drop")
+                                  drop_stray=self.config.get("number_check") == "drop", faded=faded)
 
     async def recheck(self, it, start_lines, new, draft, allow_rewrite=True):
         """書いている間に会話が進んだ。通す／書き直す／黙る を Jev が選ぶ。Jev が失敗したら黙る。"""
