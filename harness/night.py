@@ -7,15 +7,16 @@
 4. 日記を書く：その日の出来事、覚えたこと、自分が言ったことだけを材料に、記録用 LLM が書く
 
 5. 人物ページを更新する：その日に話した人ごとに、記録用 LLM が `05 人物/` のページを書き直す（harness/people.py）
+6. 近況を蒸留する：直近3日の日記・出来事・新着の記憶・人物ページの更新から、記録用 LLM が `02 State/近況.md` を書き直す（harness/digest.py）
 
-config.yaml の `night.write` が false の間は、2で何を古いにするか、5で何を書くかをログに出すだけで書き換えない。
+config.yaml の `night.write` が false の間は、2で何を古いにするか、5と6で何を書くかをログに出すだけで書き換えない。
 """
 import logging
 from datetime import datetime, timedelta
 from itertools import combinations
 
 from harness.api import loads, noul
-from harness import people
+from harness import digest, people
 from harness.context import lesson_rows
 from harness.saver import norm
 
@@ -113,4 +114,5 @@ async def run(agent, t: datetime):
     events, learned, mine = agent.day_material(day)
     await diary(agent, day, events, learned, mine)
     met = await people.update(agent, day, write_=bool(cfg.get("write")))
-    return {"tidied": done, "other": n_other, "people": met}
+    gist = await digest.update(agent, day, write_=bool(cfg.get("write")))
+    return {"tidied": done, "other": n_other, "people": met, "digest": gist}

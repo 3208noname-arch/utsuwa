@@ -20,7 +20,7 @@ from datetime import datetime, timedelta
 
 import yaml
 
-from harness import __version__, context, night, people, writer
+from harness import __version__, context, digest, night, people, writer
 from harness.api import choice, noul
 from harness.outbox import Intent, Outbox
 from harness.persona import Persona
@@ -363,6 +363,9 @@ class Agent:
             s["最近の出来事"] = "\n".join(events)
         if self.config.get("nick"):
             s["呼ばれ方"] = f"このサーバーでのあなたの表示名は {self.config['nick']}"
+        gist = digest.recall(self.vault, t.date())
+        if gist:     # 固定枠。Jev の選択を介さず、毎回渡す（先頭に更新日）
+            s[digest.SECTION] = gist
         who = people.recall(self.vault, it.target["author"]) if it.target else None
         if who:      # 固定枠。Jev の選択を介さず、返信先の1人分だけ渡す
             s[people.SECTION] = who
