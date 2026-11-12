@@ -54,14 +54,38 @@ class WriterTest(unittest.TestCase):
         self.assertEqual(out, ["うん知ってる"])
 
     def test_stray_number_candidate_is_dropped(self):
-        """節と会話に無い金額を言う案は落とし、残りの案から選ぶ。全案なら書き直して黙る。"""
+        """drop_stray の時は、節と会話に無い金額を言う案を落とし、残りの案から選ぶ。全案なら書き直して黙る。"""
         a, _, _ = make(pov_ok, FakeLLM([cands("あと3000円しかない", "うん知ってる")]))
-        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards()))
+        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards(), drop_stray=True))
         self.assertEqual(out, ["うん知ってる"])
         a, _, _ = make(pov_ok, FakeLLM([cands("あと3000円しかない"), cands("あと5000円しかない")]))
-        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards()))
+        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards(), drop_stray=True))
         self.assertIsNone(out)
         self.assertEqual(len(a.llm.calls), 2)
+
+    def test_stray_number_is_only_logged_by_default(self):
+        """既定（ログだけ）では、節と会話に無い数字を含む案も落とさない。ログには残す。"""
+        for text in ("あと3時間でバイト", "ラーメン1000円くらい", "500円貸して", "2〜3人で行こう"):
+            a, _, _ = make(pov_ok, FakeLLM([cands(text)]))
+            with self.assertLogs("utsuwa", "INFO") as cm:
+                out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards()))
+            self.assertEqual(out, [text])
+            self.assertEqual(len(a.llm.calls), 1)
+            self.assertTrue(any("数字チェック（ログだけ）" in x for x in cm.output), text)
+
+    def test_number_check_config_switches_drop(self):
+        """config.yaml の number_check が drop の時だけ、本体（compose）が案を落とす。見本の既定は log。"""
+        def run(mode):
+            a, _, clock = make(pov_ok, FakeLLM([cands("あと3000円しかない", "うん知ってる")]))
+            if mode:
+                a.config["number_check"] = mode
+            else:
+                self.assertEqual(a.config.get("number_check"), "log")
+            target = {"id": "9", "author": "ユウ", "author_id": "u1", "text": "金ある？", "channel": "c",
+                      "at": clock["t"].isoformat()}
+            return asyncio.run(a.compose(Intent("reply", "c", "normal", clock["t"], target=target)))
+        self.assertEqual(run(None), ["あと3000円しかない"])
+        self.assertEqual(run("drop"), ["うん知ってる"])
 
     def test_pick_retried_once_on_jev_failure(self):
         """Jev が1回だけ失敗しても、同じ案で判定をやり直せば書き直さずに選べる。"""

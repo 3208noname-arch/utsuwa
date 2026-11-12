@@ -83,7 +83,7 @@ def _numbers(text):
 
 def stray_numbers(msgs, allowed_text):
     """候補に出てくる金額・時刻のうち、渡した節と会話のどこにも無いもの。
-    書き手が数字を作った疑いとして、案を落とす材料にする。"""
+    書き手が数字を作った疑いとして、ログに出す（write の drop_stray が True の時だけ、案を落とす材料にする）。"""
     allowed = _numbers(allowed_text)
     hours = {x.split(":")[0] for x in allowed if ":" in x}
     out = set()
@@ -169,8 +169,11 @@ async def pick(jev, about, log_lines, mine, cands, recalled="", now=""):
     return (cands[best], score) if score >= POV_MIN else (None, score)
 
 
-async def write(llm, jev, vault, about, sections, kind, guards, reactions=(), mine=(), log_lines="", recalled=None):
-    """返事を書いて1案を選ぶ。リアクションなら絵文字、文章ならメッセージのリスト。書けなければ None（黙る）。"""
+async def write(llm, jev, vault, about, sections, kind, guards, reactions=(), mine=(), log_lines="", recalled=None,
+                drop_stray=False):
+    """返事を書いて1案を選ぶ。リアクションなら絵文字、文章ならメッセージのリスト。書けなければ None（黙る）。
+    drop_stray は、節と会話に無い数字（stray_numbers）を含む案を落とすか。False の間はログに出すだけで案は残す
+    （「あと3時間でバイト」「500円貸して」のような普通の数字も引っかかるので、既定はログだけ。config.yaml の number_check）。"""
     user = sections_text({**sections, "型": KIND_LABEL[kind], "案の数": str(CANDIDATES)})
     if kind == "reaction" and reactions:
         user += "\n【絵文字の候補】" + " ".join(reactions)
@@ -187,9 +190,11 @@ async def write(llm, jev, vault, about, sections, kind, guards, reactions=(), mi
             if not passes(c, guards):
                 continue
             stray = stray_numbers(c, allowed)
-            if stray:
+            if stray and drop_stray:
                 log.info("数字チェック: 節と会話に無い数字 %s を含む案を落とした: %s", stray, " ｜ ".join(c))
                 continue
+            if stray:
+                log.info("数字チェック（ログだけ）: 節と会話に無い数字 %s を含む案: %s", stray, " ｜ ".join(c))
             bad = sleep_mismatch(c, sections.get("今", ""))
             if bad:
                 log.info("数字チェック: 睡眠の計算が合わない案を落とした: %s", bad)
