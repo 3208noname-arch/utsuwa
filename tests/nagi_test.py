@@ -269,3 +269,12 @@ class NagiThroughAgentTest(unittest.TestCase):
         self.assertIn("attack", reads[0][1])
         self.assertIn("【相手】", reads[0][0])
         self.assertEqual(a.persona.anger_of("u-ミナ"), 40)
+
+
+class UnusedHookTest(unittest.TestCase):
+    def test_topic_text_is_gone(self):
+        """想起の「短い材料」を廃止した後は誰も呼ばない。人格の部品に残さない。"""
+        from harness.persona import Persona
+        from personas.nagi import Nagi
+        self.assertFalse(hasattr(Persona, "topic_text"))
+        self.assertFalse(hasattr(Nagi, "topic_text"))

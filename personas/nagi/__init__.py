@@ -286,10 +286,6 @@ class Nagi(Persona):
                          if start <= datetime.fromisoformat(at) <= end), 1)
 
     # --- 話題の好き嫌いと、その後の経験 ------------------------------------------------------
-    def topic_text(self, text):
-        """会話に名前が出ている話題（state の topics）。想起の短い材料に使う。"""
-        return "、".join(x["name"] for x in self.topic_list if topics.mentioned(x, text))
-
     @property
     def topic_list(self):
         return self.topics_state.data.setdefault("topics", [])
