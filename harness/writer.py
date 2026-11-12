@@ -96,6 +96,51 @@ def stray_numbers(msgs, allowed_text):
             out.add(n)
     return sorted(out)
 
+_T = r"(?:(午前|午後)?(\d{1,2})(?:時(?!間)(半|(\d{1,2})分)?|:(\d{2})))"
+_GAP = r"[^0-9。！？!?\n]"
+_SLEEP = re.compile(
+    rf"(今から|{_T}(?:に|から)?){_GAP}{{0,8}}?(\d+)時間(半)?{_GAP}{{0,10}}?{_T}"
+    r"(?:に|には)?(?=起き|目が覚|目覚|なる|だ|です|かな|か|ね|よ|わ|ぞ|$|[、。！？!?…~〜])")
+
+
+def _tm(g, i):
+    """_T の抜き出し結果（i 番目の群から）を (時, 分, 午前午後の指定の有無) に。"""
+    ap, h, half, mm, colon = g[i:i + 5]
+    h = int(h)
+    m = 30 if half == "半" else int(mm or colon or 0)
+    return h + (12 if ap == "午後" and h < 12 else 0), m, bool(ap)
+
+
+def _cands(h, m, fixed):
+    """午前午後の指定が無く12以下の時は、12時間制の言い方かもしれないので+12時間も候補にする。"""
+    base = h * 60 + m
+    return {base % 1440} | (set() if fixed or h > 12 else {(base + 720) % 1440})
+
+
+def sleep_mismatch(msgs, now=""):
+    """「寝る時刻（今から寝るなら【今】の時刻）＋睡眠時間＋起きる時刻」がそろった文だけ、足し算が合うかを見る。
+    合わない文を返す（無ければ None）。そろっていない文は対象外。"""
+    nm = re.findall(r"(\d{1,2}):(\d{2})", now.translate(_FW))
+    for msg in msgs:
+        for sent in re.split(r"(?<=[。！？!?\n])", msg.translate(_FW)):
+            m = _SLEEP.search(sent)
+            if not m or not re.search(r"寝|眠", m.group(0)):
+                continue
+            g = m.groups()
+            if g[0] == "今から":
+                if not nm:
+                    continue
+                starts = {int(nm[-1][0]) * 60 + int(nm[-1][1])}
+            else:
+                sh, sm, sf = _tm(g, 1)
+                starts = _cands(sh, sm, sf)
+            dur = int(g[6]) * 60 + (30 if g[7] else 0)
+            wh, wm, wf = _tm(g, 8)
+            wakes = _cands(wh, wm, wf)
+            if not any((s + dur) % 1440 in wakes for s in starts):
+                return sent.strip()
+    return None
+
 
 def passes(msgs, guards):
     return not any(g.search(m) for g in guards for m in msgs)
@@ -105,13 +150,12 @@ async def pick(jev, about, log_lines, mine, cands, recalled="", now=""):
     """立場チェック。案ごとの Noul を1回で聞き、閾値を超えた中で一番高い案。
     Jev が失敗したら素通ししない（None を返し、呼び出し側が1回だけ書き直す）。
     recalled は、この返事を書く時に引いた記憶の節（render 済み）。あれば、それと食い違わないことも見る。
-    観点「帰属」は【会話】だけで見る。now は【今】の節（日付・曜日・時間帯）で、あれば時間帯の言葉と睡眠の計算も見る。"""
+    観点「帰属」は【会話】だけで見る。now は【今】の節（日付・曜日・時間帯）で、あれば時間帯の言葉も見る（睡眠の計算は Jev に判別できないので sleep_mismatch が見る）。"""
     tail = ("相手の台詞を代わりに言っていない、自分（あなた）の最近の発言や会話の事実と食い違っていない、"
             "自分の言ったことを相手のせいにしていない。"
             "案が触れている発言・呼びかけ・呼び名について、言った人と宛先が会話の記録と合っている。"
             + ("思い出した記憶と矛盾していない。" if recalled else "")
-            + ("時間帯の言葉（朝・昼・夕方・夜・深夜）と曜日が【今】と合っている。"
-               "寝る・起きるの話では、時刻の計算（何時に寝て何時間寝たら何時起きる）が【今】の時刻と合っている。" if now else ""))
+            + ("時間帯の言葉（朝・昼・夕方・夜・深夜）と曜日が【今】と合っている。" if now else ""))
     qs = {f"c{i}": noul(f"案{i}は、{about}自身の立場から言える発言として筋が通っているか。" + tail)
           for i in range(len(cands))}
     state = ((f"【今】{now}\n" if now else "") + f"【会話】\n{log_lines}\n【あなたが最近言ったこと】\n" + ("\n".join(mine) or "（無し）") + "\n" +
@@ -145,6 +189,10 @@ async def write(llm, jev, vault, about, sections, kind, guards, reactions=(), mi
             stray = stray_numbers(c, allowed)
             if stray:
                 log.info("数字チェック: 節と会話に無い数字 %s を含む案を落とした: %s", stray, " ｜ ".join(c))
+                continue
+            bad = sleep_mismatch(c, sections.get("今", ""))
+            if bad:
+                log.info("数字チェック: 睡眠の計算が合わない案を落とした: %s", bad)
                 continue
             ok.append(c)
         if ok:

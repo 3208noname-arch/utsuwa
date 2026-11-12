@@ -120,7 +120,7 @@ class WriterTest(unittest.TestCase):
         self.assertNotIn("思い出した記憶", json.dumps(qs, ensure_ascii=False))
 
     def _fact_rule(self):
-        """偽の Jev。帰属・時間帯・睡眠の計算が会話や【今】と合わない案を落とす（問いに観点が入っている時だけ）。"""
+        """偽の Jev。帰属・時間帯が会話や【今】と合わない案を落とす（問いに観点が入っている時だけ）。"""
         def rule(state, name, q):
             if not name.startswith("c"):
                 return None
@@ -128,7 +128,7 @@ class WriterTest(unittest.TestCase):
             qt = json.dumps(q, ensure_ascii=False)
             bad = ("言った人と宛先" in qt and "ユウが変な呼び方" in body) or \
                   ("時間帯の言葉" in qt and "【今】" in state and "土曜夜" in body) or \
-                  ("時刻の計算" in qt and "6時半" in body)
+                  False
             return 0.1 if bad else 0.9
         return rule
 
@@ -149,10 +149,37 @@ class WriterTest(unittest.TestCase):
         self.assertIn("【今】11月9日（月）の昼", a.jev.calls[0][0])
         self.assertIn("時間帯の言葉", json.dumps(a.jev.calls[0][1], ensure_ascii=False))
 
-    def test_sleep_calc_mismatch_is_dropped(self):
-        a, out = self._run_fact("16時に寝て10時間寝たら6時半だね", "今から寝たら明日の朝には起きるよ")
-        self.assertEqual(out, ["今から寝たら明日の朝には起きるよ"])
-        self.assertIn("時刻の計算", json.dumps(a.jev.calls[0][1], ensure_ascii=False))
+    def test_sleep_calc_not_asked_to_jev(self):
+        a, out = self._run_fact("今から寝たら明日の朝には起きるよ", "昼は何食べた？")
+        self.assertNotIn("時刻の計算", json.dumps(a.jev.calls[0][1], ensure_ascii=False))
+
+    def test_sleep_calc_wrong_is_dropped(self):
+        n = "11月9日（月）の昼 16:00"
+        self.assertTrue(writer.sleep_mismatch(["16時に寝て10時間寝たら6時半だね"], n))
+        self.assertTrue(writer.sleep_mismatch(["今から2時間仮眠して19時に起きる"], n))
+        self.assertTrue(writer.sleep_mismatch(["おはよ", "23時に寝て7時間半寝て7時に起きる"], n))
+
+    def test_sleep_calc_right_passes(self):
+        n = "11月9日（月）の昼 16:00"
+        self.assertIsNone(writer.sleep_mismatch(["今から2時間仮眠して18時に起きる"], n))
+        self.assertIsNone(writer.sleep_mismatch(["23時に寝て7時間半寝て6時半に起きる"], n))
+        self.assertIsNone(writer.sleep_mismatch(["夜10時に寝て8時間寝たら6時に起きるよ"], n))
+
+    def test_sleep_calc_midnight_wrap_passes(self):
+        self.assertIsNone(writer.sleep_mismatch(["22時に寝て8時間で6時"], ""))
+        self.assertIsNone(writer.sleep_mismatch(["22:30に寝て2時間寝たら0:30だね"], ""))
+
+    def test_sleep_calc_unpaired_is_out_of_scope(self):
+        n = "11月9日（月）の昼 16:00"
+        for t in ["10時間寝て6時半に起きた", "今から寝たら明日の朝には起きるよ", "夜中に起きちゃう",
+                  "8時間は寝たい", "16時に寝て10時間寝る", "9時間寝て10時の会議に行く"]:
+            self.assertIsNone(writer.sleep_mismatch([t], n), t)
+
+    def test_sleep_calc_wrong_candidate_dropped_in_write(self):
+        a, _, _ = make(self._fact_rule(), FakeLLM([cands("今から2時間仮眠して19時に起きるよ", "昼は何食べた？")]))
+        s = {"今": "11月9日（月）の昼 16:00 19時"}
+        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", s, "normal", a.persona.guards(), log_lines="ユウ: おはよ"))
+        self.assertEqual(out, ["昼は何食べた？"])
 
     def test_correct_candidate_passes_and_all_bad_goes_silent(self):
         a, out = self._run_fact("私が言ったのは昼のことだよ", "昼は何食べた？")
