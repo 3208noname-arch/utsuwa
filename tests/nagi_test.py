@@ -23,6 +23,20 @@ def make(t):
 
 
 class NagiTest(unittest.TestCase):
+    def test_people_facts_for_night_page(self):
+        a, _ = make(datetime(2026, 11, 12, 3, 0))
+        a.persona.likes.data["u1"] = {"v": 20.0, "display": "ミナ", "events": [
+            {"at": "2026-11-11T20:00:00", "what": "ナギにjoke", "delta": 2, "quote": "本文は渡さない"},
+            {"at": "2026-11-10T20:00:00", "what": "ナギにattack", "delta": -8, "quote": ""}]}
+        a.persona.names_state.data["u1"] = {"display": "ミナ", "forms": {"みなみな": {"n": 3, "by": ["a", "b"], "last": ""}}}
+        got = a.persona.people_facts("u1", "ミナ", datetime(2026, 11, 11).date(), "")
+        self.assertIn("好感度は「好き」", got)
+        self.assertIn("この日に冗談を言われた", got)
+        self.assertNotIn("この日に責められた", got)                # 別の日の出来事は入れない
+        self.assertIn("みんなの呼び名: みなみな", got)
+        self.assertFalse(any("本文は渡さない" in x for x in got))
+        self.assertEqual(a.persona.people_facts("none", "ケイ", datetime(2026, 11, 11).date(), ""), [])
+
     def test_schedule_flows_into_timetable(self):
         a, _ = make(datetime(2026, 11, 9, 13, 0))      # 月曜 13時（古本屋のバイト 12〜18時）
         p = a.persona.presence(a.now())

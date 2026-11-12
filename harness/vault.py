@@ -14,7 +14,7 @@ import yaml
 
 log = logging.getLogger("utsuwa")
 
-WRITABLE = ("00 Diary", "01 Lessons", "02 State", "03 Logs")
+WRITABLE = ("00 Diary", "01 Lessons", "02 State", "03 Logs", "05 人物")
 WATCH_EXT = (".md", ".yaml", ".yml", ".base")
 
 
@@ -125,7 +125,7 @@ class Vault:
         return default if v is None else v
 
     # --- 書き換えの検知 -----------------------------------------------------
-    def changes(self, subs=("Agents", "01 Lessons", "00 Diary")):
+    def changes(self, subs=("Agents", "01 Lessons", "00 Diary", "05 人物")):
         """前回呼んだ時から書き換わった・増えた・消えたファイル（md、yaml、base）。初回は空。"""
         now = {}
         for sub in subs:

@@ -92,6 +92,10 @@ class Persona:
         """会話用 LLM に渡す節 {節名: 文}。節名は AGENTS.md に書いてあるものだけを使う。"""
         return {}
 
+    def people_facts(self, uid, display, day, convo):
+        """夜の人物ページ更新の材料のうち、人格の状態（好感度、怒り、呼び名、話題）を言葉にした行のリスト。"""
+        return []
+
     def guards(self, target=None):
         """送る前に弾く正規表現のリスト。1通でも当たった案は使わない。target は返す相手の発言（無ければ None）。"""
         return []

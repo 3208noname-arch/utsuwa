@@ -380,6 +380,31 @@ class Nagi(Persona):
                 s["返信先への怒り"] = anger.as_words(self.anger_state.data[str(target["author_id"])], v)
         return s
 
+    KIND_WORDS = {"joke": "冗談を言われた", "tease": "からかわれた", "belittle": "見下された",
+                  "attack": "責められた", "support": "気遣ってくれた", "treat": "おごってくれた"}
+
+    def people_facts(self, uid, display, day, convo):
+        """夜の人物ページ更新の材料。好感度の段階とその日の出来事（本文は渡さない）、怒り、呼び名、話題。"""
+        out = []
+        like = self.likes.data.get(str(uid))
+        if like:
+            out.append(f"好感度は「{affinity.band(like['v'])}」")
+            for e in like.get("events", []):
+                what = self.KIND_WORDS.get(str(e.get("what", "")).removeprefix("ナギに"))
+                if what and e.get("at", "")[:10] == day.isoformat():
+                    out.append(f"この日に{what}")
+        v = self.anger_of(uid)
+        if v:
+            rec = self.anger_state.data[str(uid)]
+            out.append(f"{anger.band(v)}（「{rec.get('why', '')}」と言われた）")
+        forms = names.adopted(self.names_state.data, uid)
+        if forms:
+            out.append("みんなの呼び名: " + "、".join(forms))
+        talked = [x["name"] for x in self.topic_list if topics.mentioned(x, convo)]
+        if talked:
+            out.append("この日に出た話題: " + "、".join(talked))
+        return out
+
     def guards(self, target=None):
         out = [POLITE]
         if not (target and self.anger_of(target["author_id"]) >= anger.CURT_OK_FROM):

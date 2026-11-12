@@ -6,13 +6,16 @@
 3. 「その他」を数える：溜まったら知らせる（新しい種類を作るかは人が決める）
 4. 日記を書く：その日の出来事、覚えたこと、自分が言ったことだけを材料に、記録用 LLM が書く
 
-config.yaml の `night.write` が false の間は、2で何を古いにするかをログに出すだけで書き換えない。
+5. 人物ページを更新する：その日に話した人ごとに、記録用 LLM が `05 人物/` のページを書き直す（harness/people.py）
+
+config.yaml の `night.write` が false の間は、2で何を古いにするか、5で何を書くかをログに出すだけで書き換えない。
 """
 import logging
 from datetime import datetime, timedelta
 from itertools import combinations
 
 from harness.api import loads, noul
+from harness import people
 from harness.context import lesson_rows
 from harness.saver import norm
 
@@ -109,4 +112,5 @@ async def run(agent, t: datetime):
         agent.notify(f"「その他」の記憶が{n_other}件になった。新しい種類を作るか見てほしい")
     events, learned, mine = agent.day_material(day)
     await diary(agent, day, events, learned, mine)
-    return {"tidied": done, "other": n_other}
+    met = await people.update(agent, day, write_=bool(cfg.get("write")))
+    return {"tidied": done, "other": n_other, "people": met}
