@@ -87,18 +87,77 @@ def brief_of(rating):
     return context.make_brief(text, who) if text else ""
 
 
-async def replay(jev, vault, ratings, about, kinds_about=None, kinds_when=None):
+class RecordingJev:
+    """jev を包み、ask の問いと答えをそのまま記録する（select の挙動は変えない）。答えに無い問いは棄権。"""
+
+    def __init__(self, jev):
+        self.jev, self.calls = jev, []
+
+    async def ask(self, state, questions):
+        ans = await self.jev.ask(state, questions)
+        self.calls.append((questions, ans))
+        return ans
+
+
+def probs_of(calls, kinds, cand_rows):
+    """記録から確率を取り出す。None は棄権（B は聞かなかった時も None）。
+    呼び出しの順は select の流れ（種類A → 種類B（brief があれば）→ 行）。"""
+    ks = [c for c in calls if next(iter(c[0]), "").startswith("k")]
+    rs = [c for c in calls if next(iter(c[0]), "").startswith("r")]
+    a = ks[0][1] if ks else {}
+    b = ks[1][1] if len(ks) > 1 else {}
+    out = {"kinds": {k: (a.get(f"k{i}"), b.get(f"k{i}") if len(ks) > 1 else None) for i, k in enumerate(kinds)},
+           "b_asked": len(ks) > 1, "rows": []}
+    if rs:
+        out["rows"] = [(r, rs[0][1].get(f"r{i}")) for i, r in enumerate(cand_rows)]
+    return out
+
+
+async def replay(jev, vault, ratings, about, kinds_about=None, kinds_when=None, probs=False):
     rows = context.lesson_rows(vault)
     results = []
     for rt in ratings:
-        _, picked, stats = await context.select(jev, vault, convo_text(rt), about, rating_day(rt), kinds_about,
+        rec = RecordingJev(jev) if probs else jev
+        _, picked, stats = await context.select(rec, vault, convo_text(rt), about, rating_day(rt), kinds_about,
                                                  kinds_when, brief_of(rt))
         cands = candidates(rows, rt)
         verdict, got = judge(picked, cands)
         results.append({"at": rt.get("at"), "label": rt.get("label"), "comment": rt.get("comment"),
                         "picked": [(r.name, r.kind) for r in picked], "candidates": [r.name for r in cands],
                         "got": got, "verdict": verdict, "stats": stats})
+        if probs:
+            allrows = rows + context.diary_rows(vault, rating_day(rt))
+            kinds = sorted({r.kind for r in allrows})
+            wanted = set(stats.get("kinds", []))
+            cand_rows = [r for r in allrows if r.kind in wanted] if stats.get("candidates") else []
+            results[-1]["probs"] = probs_of(rec.calls, kinds, cand_rows)
+            results[-1]["cand_rels"] = {c.rel for c in cands}
     return results
+
+
+def _p(v):
+    return "棄権" if v is None else f"{v:.3f}"
+
+
+def report_probs(results):
+    """--probs: 種類の段は 種類×(A, B) と閾値との差、行の段は候補行ごとの確率（正解候補に★、選ばれた行に✔）。"""
+    out = []
+    for i, x in enumerate(results, 1):
+        pr = x["probs"]
+        out.append(f"{i}. {x['at']} 「{x['label']}」 → {x['verdict']}")
+        out.append(f"   種類の段（閾値 {context.KIND_MIN}。B は{'聞いた' if pr['b_asked'] else '聞かなかった'}）")
+        for k, (a, b) in pr["kinds"].items():
+            d = "".join(f" {n}差{v - context.KIND_MIN:+.3f}" for n, v in (("A", a), ("B", b)) if v is not None)
+            out.append(f"     {k}: A={_p(a)} B={_p(b) if pr['b_asked'] else '-'}{d}")
+        if pr["rows"]:
+            out.append(f"   行の段（閾値 {context.ROW_MIN}、★=正解候補 ✔=選ばれた）、確率の高い順")
+            for r, v in sorted(pr["rows"], key=lambda t: -(t[1] if t[1] is not None else -1)):
+                star = "★" if r.rel in x["cand_rels"] else " "
+                ok = "✔" if v is not None and v >= context.ROW_MIN else " "
+                out.append(f"     {star}{ok} {_p(v)} {r.name}（{r.kind}）")
+        else:
+            out.append("   行の段: 候補なし（種類で全滅）")
+    return "\n".join(out)
 
 
 def report(results):
@@ -121,6 +180,7 @@ def main(argv=None):
     ap.add_argument("--ratings", help="評価の jsonl（省略時は 03 Logs/ratings/*.jsonl の全部）")
     ap.add_argument("--env", help=".env のパス")
     ap.add_argument("--fake", action="store_true", help="FakeJev で回す（何も選ばない。動作確認用）")
+    ap.add_argument("--probs", action="store_true", help="種類・行の生の確率を出す（棄権は「棄権」）。select の挙動は変えない")
     ap.add_argument("--diary", action="store_true", help="日記も想起の材料に入れる")
     a = ap.parse_args(argv)
 
@@ -147,8 +207,11 @@ def main(argv=None):
     kinds_about = {k: v.get("about", "") for k, v in (config.get("kinds") or {}).items()}
     kinds_when = {k: v.get("when", "") for k, v in (config.get("kinds") or {}).items()}
     with _no_diary(not a.diary):
-        results = asyncio.run(replay(jev, vault, ratings, config.get("name", "あなた"), kinds_about, kinds_when))
+        results = asyncio.run(replay(jev, vault, ratings, config.get("name", "あなた"), kinds_about, kinds_when,
+                                  a.probs))
     print(report(results))
+    if a.probs:
+        print("\n=== 確率 ===\n" + report_probs(results))
     return 0
 
 
