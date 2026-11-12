@@ -81,6 +81,30 @@ def _numbers(text):
     return out
 
 
+_DATE = r"(?:\d{4}[-/年])?(\d{1,2})[-/月](\d{1,2})"
+
+
+def _dates(text):
+    """日付の表記（11-09、11/9、11月9日、2026-11-09）を (月, 日) にそろえて抜く。"""
+    return {(int(m), int(d)) for m, d in re.findall(_DATE, text.translate(_FW))}
+
+
+def leaked(msgs, faded, allowed_text):
+    """本文を渡さなかった行（薄れ層の曖昧・痕跡）にしか無い数字・日付が、候補に出ているか。出た物を返す。
+    渡した文脈や会話にもある数字・日付は、そこから言えるので含めない。"""
+    hidden_n, hidden_d = set(), set()
+    for r in faded:
+        hidden_n |= _numbers(r.body)
+        hidden_d |= _dates(r.body) | _dates(r.date)
+    hidden_n -= _numbers(allowed_text)
+    hidden_d -= _dates(allowed_text)
+    out = set()
+    for m in msgs:
+        out |= hidden_n & _numbers(m)
+        out |= {f"{a}/{b}" for a, b in hidden_d & _dates(m)}
+    return sorted(out)
+
+
 def stray_numbers(msgs, allowed_text):
     """候補に出てくる金額・時刻のうち、渡した節と会話のどこにも無いもの。
     書き手が数字を作った疑いとして、ログに出す（write の drop_stray が True の時だけ、案を落とす材料にする）。"""
@@ -170,7 +194,7 @@ async def pick(jev, about, log_lines, mine, cands, recalled="", now=""):
 
 
 async def write(llm, jev, vault, about, sections, kind, guards, reactions=(), mine=(), log_lines="", recalled=None,
-                drop_stray=False):
+                drop_stray=False, faded=()):
     """返事を書いて1案を選ぶ。リアクションなら絵文字、文章ならメッセージのリスト。書けなければ None（黙る）。
     drop_stray は、節と会話に無い数字（stray_numbers）を含む案を落とすか。False の間はログに出すだけで案は残す
     （「あと3時間でバイト」「500円貸して」のような普通の数字も引っかかるので、既定はログだけ。config.yaml の number_check）。"""
@@ -188,6 +212,10 @@ async def write(llm, jev, vault, about, sections, kind, guards, reactions=(), mi
         ok = []
         for c in cands:
             if not passes(c, guards):
+                continue
+            fab = leaked(c, faded, allowed) if faded else []
+            if fab:
+                log.info("数字チェック: 思い出せない記憶（本文を渡していない行）の数字・日付 %s を含む案を落とした: %s", fab, " ｜ ".join(c))
                 continue
             stray = stray_numbers(c, allowed)
             if stray and drop_stray:
