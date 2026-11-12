@@ -2,8 +2,9 @@
 
 - 1件は {id, 内容, 相手（表示名か空）, 種類（約束／宣言）, 期限（ISO 日付か空）, 状態（未完了／済み／流れた）, 作られた日}。ファイル全体は件の並び
 - 記録（`add`）は人格が送った返事を Jev が読んだ後に呼ぶ。同じ内容・同じ相手の未完了は足さない
-- 想起（`recall`）はコードで決まる固定枠。未完了の最大 `RECALL_MAX` 件を、返信先と一致する件、期限が近い順（期限なしは後）で節にする
-- 夜の更新（`update`）は night.py から呼ぶ。期限を過ぎた未完了は、コードの判定だけで「流れた」にする（LLM に聞かない）。
+- 想起（`recall`）はコードで決まる固定枠。未完了の最大 `RECALL_MAX` 件を、返信先と一致する件、期限が近い順（期限なしは後で、新しい順）で節にする
+- 夜の更新（`update`）は night.py から呼ぶ。期限を過ぎた未完了と、期限が無いまま作られてから `UNDATED_DAYS` 日を過ぎた未完了は、
+  コードの判定だけで「流れた」にする（LLM に聞かない）。期限なしに寿命が無いと、古い宣言が固定枠を占め続ける。
   その日の会話と出来事で「済み」になった件は Jev が判定する。write が False の間は状態を変えず案をログに出すだけ
 - 置き場は 02 State（許可リスト内）。読み書きは harness/store.py の State を使う
 """
@@ -22,6 +23,7 @@ SECTION = "自分の約束・宣言"      # 会話用 LLM に渡す節の名前�
 KINDS = ("約束", "宣言")
 OPEN, DONE, LAPSED = "未完了", "済み", "流れた"
 RECALL_MAX = 3
+UNDATED_DAYS = 14           # 期限の無い件の寿命。作られてからこの日数を過ぎたら「流れた」にする
 TEXT_MAX = 80
 DONE_MIN = 0.8              # 夜の「済み」判定を採る確率
 DAY_LINES = 40              # 夜の判定に渡す、その日の会話の行数
@@ -66,12 +68,25 @@ def due_from(text, today):
     return ""
 
 
+def _made(r):
+    """作られた日（date）。読めなければ None。"""
+    try:
+        return date.fromisoformat(str(r.get("作られた日") or ""))
+    except ValueError:
+        return None
+
+
 def pick(rows, author, n=RECALL_MAX):
-    """想起で渡す件。返信先と一致する件が先、次に期限が近い順（期限なしは後）、同じなら作られた順。"""
+    """想起で渡す件。返信先と一致する件が先、次に期限が近い順（期限なしは後）。
+    同じ期限なら作られた順、期限なし同士は新しい順（古い宣言が枠を占め続けないように）。"""
     key = norm(author or "")
     opened = [r for r in rows if r.get("状態") == OPEN]
-    opened.sort(key=lambda r: (not (key and norm(r.get("相手", "")) == key), r.get("期限") or "9999-12-31",
-                               r.get("作られた日", "")))
+
+    def order(r):
+        made = _made(r).toordinal() if _made(r) else 0
+        return (not (key and norm(r.get("相手", "")) == key), r.get("期限") or "9999-12-31",
+                made if r.get("期限") else -made)
+    opened.sort(key=order)
     return opened[:n]
 
 
@@ -88,8 +103,13 @@ def recall(agent, author):
 
 
 def lapse(rows, today):
-    """期限を過ぎた未完了（期限の日はまだ有効）。コードの判定。"""
-    return [r for r in rows if r.get("状態") == OPEN and r.get("期限") and r["期限"] < today.isoformat()]
+    """流れた未完了。期限を過ぎた件（期限の日はまだ有効）と、期限が無いまま作られてから UNDATED_DAYS 日を過ぎた件
+    （ちょうど UNDATED_DAYS 日目はまだ有効）。コードの判定。"""
+    def over(r):
+        if r.get("期限"):
+            return r["期限"] < today.isoformat()
+        return bool(_made(r)) and (today - _made(r)).days > UNDATED_DAYS
+    return [r for r in rows if r.get("状態") == OPEN and over(r)]
 
 
 def day_text(agent, day):
@@ -115,7 +135,8 @@ async def update(agent, day, write_=False):
         done.append((r["id"], LAPSED, write_))
         if write_:
             r["状態"] = LAPSED
-        log.info("約束の台帳%s: %s を %s にする（期限 %s 超過）", "" if write_ else "（ログだけ）", r["内容"], LAPSED, r["期限"])
+        why = f"期限 {r['期限']} 超過" if r.get("期限") else f"期限なしで {r['作られた日']} から{UNDATED_DAYS}日を過ぎた"
+        log.info("約束の台帳%s: %s を %s にする（%s）", "" if write_ else "（ログだけ）", r["内容"], LAPSED, why)
     skip = {d[0] for d in done}
     rest = [r for r in st.data if r["状態"] == OPEN and r["id"] not in skip]
     if rest:

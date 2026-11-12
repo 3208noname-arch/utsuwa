@@ -105,6 +105,20 @@ class RecallTest(unittest.TestCase):
         self.assertNotIn("なし期限", "".join(got))
         self.assertNotIn("済んだ", "".join(got))
 
+    def test_undated_are_newest_first(self):
+        """期限なし同士は新しい順。古い3件が枠を占め続けない。"""
+        a = make()
+        seed(a, [rec("1", "古い一", made="2026-11-01"), rec("2", "古い二", made="2026-11-02"), rec("3", "古い三", made="2026-11-03"),
+                 rec("4", "きのうの宣言", made="2026-11-11"), rec("5", "今日の宣言", made="2026-11-12")])
+        got = promises.recall(a, "ミナ").split("\n")
+        self.assertEqual([x[2:].split("（")[0] for x in got], ["今日の宣言", "きのうの宣言", "古い三"])
+
+    def test_dated_ties_keep_made_order(self):
+        a = make()
+        seed(a, [rec("1", "後", due="2026-11-20", made="2026-11-11"), rec("2", "先", due="2026-11-20", made="2026-11-05")])
+        got = promises.recall(a, "ミナ").split("\n")
+        self.assertTrue(got[0].startswith("- 先") and got[1].startswith("- 後"))
+
     def test_partner_match_comes_first(self):
         a = make()
         seed(a, [rec("1", "近い別人", "トオル", due="2026-11-13"), rec("2", "ミナへ", "ミナ"), rec("3", "ミナへ2", "ミナ", due="2026-12-01")])
@@ -142,6 +156,18 @@ class NightTest(unittest.TestCase):
         st = {r["id"]: r["状態"] for r in promises.ledger(a).data}
         self.assertEqual(st, {"1": "流れた", "2": "未完了", "3": "済み", "4": "未完了"})
         self.assertIn(("1", "流れた", True), got)
+
+    def test_undated_lapses_after_lifetime(self):
+        """期限なしは、作られてから14日を過ぎたら流れた（14日目はまだ有効）。Jev には聞かない。"""
+        a = make()
+        seed(a, [rec("1", "古い宣言", made="2026-10-28", kind="宣言"), rec("2", "ぎりぎりの宣言", made="2026-10-29", kind="宣言"),
+                 rec("3", "期限つき", due="2026-12-01", made="2026-10-01")])
+        self.assertEqual([r["id"] for r in promises.lapse(promises.ledger(a).data, DAY)], ["1"])
+        got = asyncio.run(promises.update(a, DAY, write_=True))
+        self.assertEqual(got, [("1", "流れた", True)])
+        self.assertEqual([r["状態"] for r in promises.ledger(a).data], ["流れた", "未完了", "未完了"])
+        self.assertNotIn("古い宣言", a.jev.calls[0][0])
+        self.assertNotIn("古い宣言", promises.recall(a, "ミナ"))
 
     def test_lapse_is_code_only_no_jev_question_about_it(self):
         a, _ = self.run_update(True)
