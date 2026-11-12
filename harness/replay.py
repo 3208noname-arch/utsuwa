@@ -20,7 +20,7 @@ from datetime import date
 
 import yaml
 
-from harness import context
+from harness import context, fade
 from harness.vault import Vault
 
 HIT, MISS, NONE = "ヒット", "外れ", "正解候補なし"
@@ -103,18 +103,21 @@ def probs_of(calls, kinds, cand_rows):
     return out
 
 
-async def replay(jev, vault, ratings, about, kinds_about=None, kinds_when=None, probs=False):
+async def replay(jev, vault, ratings, about, kinds_about=None, kinds_when=None, probs=False, config=None):
+    """config に recall.mode: human があれば、選ばれた行に薄れ層も通し、結果の "fade" に鮮明・曖昧・落とした行・痕跡の有無を入れる。
+    picked（選ばれた行）は薄れ層の前の物で、exact の時と変わらない。"""
     rows = context.lesson_rows(vault)
     results = []
     for rt in ratings:
         rec = RecordingJev(jev) if probs else jev
-        _, picked, stats = await context.select(rec, vault, convo_text(rt), about, rating_day(rt), kinds_about,
-                                                 kinds_when)
+        mem, picked, stats = await context.select(rec, vault, convo_text(rt), about, rating_day(rt), kinds_about,
+                                                   kinds_when)
+        mem, _, finfo = fade.apply(mem, picked, config or {}, rating_day(rt))
         cands = candidates(rows, rt)
         verdict, got = judge(picked, cands)
         results.append({"at": rt.get("at"), "label": rt.get("label"), "comment": rt.get("comment"),
                         "picked": [(r.name, r.kind) for r in picked], "candidates": [r.name for r in cands],
-                        "got": got, "verdict": verdict, "stats": stats})
+                        "got": got, "verdict": verdict, "stats": stats, "fade": finfo, "mem": mem})
         if probs:
             allrows = rows + context.diary_rows(vault, rating_day(rt))
             kinds = sorted({r.kind for r in allrows})
@@ -161,6 +164,10 @@ def report(results):
         st = x["stats"]
         out.append(f"   種類: {'、'.join(st.get('kinds', [])) or 'なし'} / 候補{st.get('candidates', 0)}行（Jev が棄権すると、ここが0になる）")
         out.append(f"   正解候補: {'、'.join(x['candidates']) or 'なし'} → {x['verdict']}")
+        f = x["fade"]
+        if f:
+            out.append(f"   薄れ層: 鮮明 {'、'.join(f['vivid']) or 'なし'} / 曖昧 {'、'.join(f['blur']) or 'なし'}"
+                       f" / 落とした {'、'.join(f['dropped']) or 'なし'} / 痕跡の1行 {'あり' if f['tip'] else 'なし'}")
     hit, n = total(results)
     out.append(f"合計: ヒット {hit} / 正解候補があった件 {n}（全{len(results)}件）")
     return "\n".join(out)
@@ -173,6 +180,7 @@ def main(argv=None):
     ap.add_argument("--env", help=".env のパス")
     ap.add_argument("--fake", action="store_true", help="FakeJev で回す（何も選ばない。動作確認用）")
     ap.add_argument("--probs", action="store_true", help="種類・行の生の確率を出す（棄権は「棄権」）。select の挙動は変えない")
+    ap.add_argument("--human", action="store_true", help="薄れ層も通す（config の recall.mode を human にして回す）")
     ap.add_argument("--diary", action="store_true", help="日記も想起の材料に入れる")
     a = ap.parse_args(argv)
 
@@ -199,8 +207,10 @@ def main(argv=None):
     kinds_about = {k: v.get("about", "") for k, v in (config.get("kinds") or {}).items()}
     kinds_when = {k: v.get("when", "") for k, v in (config.get("kinds") or {}).items()}
     with _no_diary(not a.diary):
+        if a.human:
+            config = {**config, "recall": {**(config.get("recall") or {}), "mode": "human"}}
         results = asyncio.run(replay(jev, vault, ratings, config.get("name", "あなた"), kinds_about, kinds_when,
-                                  a.probs))
+                                  a.probs, config))
     print(report(results))
     if a.probs:
         print("\n=== 確率 ===\n" + report_probs(results))
