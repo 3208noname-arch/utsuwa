@@ -96,5 +96,31 @@ class ScheduleTest(unittest.TestCase):
         self.assertTrue(now_text(datetime(2026, 11, 3, 1, 0)).endswith("（月曜の夜の続き）"))
 
 
+class TemplateWordingTest(unittest.TestCase):
+    """見本（あかり）の md は、LLM にそのまま渡る。内部の仕組みの語と、別の人物（ナギ）の語を置かない。"""
+
+    def setUp(self):
+        self.v = Vault(copy_template())
+
+    def test_chat_prompt_has_no_mechanism_words(self):
+        from harness import writer
+        text = writer.system_prompt(self.v)
+        for word in ("Jev", "コード", "数字チェック", "照合"):
+            self.assertNotIn(word, text, word)
+        self.assertIn("思い出した記憶（【覚えていること】など）と違うことは言わない", text)
+
+    def test_recorder_speaks_as_akari(self):
+        text = self.v.text("Agents/RECORDER.md")
+        for word in ("ナギ", "俺", "Jev"):
+            self.assertNotIn(word, text, word)
+
+    def test_kind_hints_fit_akari(self):
+        import yaml
+        kinds = yaml.safe_load(self.v.text("Agents/config.yaml"))["kinds"]
+        hints = "".join(k.get("about", "") + k.get("when", "") for k in kinds.values())
+        for word in ("ナギ", "コンビニ", "寝起き"):
+            self.assertNotIn(word, hints, word)
+
+
 if __name__ == "__main__":
     unittest.main()
