@@ -379,9 +379,13 @@ class Agent:
         t = self.now()
         s, lines = self.sections(it, t)
         kinds = self.config.get("kinds") or {}
-        mem, _, stats = await context.select(self.jev, self.vault, lines, self.about, t.date(),
-                                             {k: v.get("about", "") for k, v in kinds.items()},
-                                             {k: v.get("when", "") for k, v in kinds.items()})
+        if it.source == "reply" and it.kind == "reaction":
+            # 絵文字だけの反応には重い想起（Jev の種類・行の選択）をしない。人物・近況・約束の固定枠は上で付いている
+            mem, stats = {}, "想起なし（リアクション）"
+        else:
+            mem, _, stats = await context.select(self.jev, self.vault, lines, self.about, t.date(),
+                                                 {k: v.get("about", "") for k, v in kinds.items()},
+                                                 {k: v.get("when", "") for k, v in kinds.items()})
         s.update(mem)
         mine = my_lines(self.convs.values(), t)
         s["あなたが最近言ったこと"] = "\n".join(mine) or "（無し）"
