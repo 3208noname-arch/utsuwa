@@ -87,6 +87,38 @@ class WriterTest(unittest.TestCase):
         self.assertIsNone(out)
         self.assertEqual(len(a.llm.calls), 2)
 
+    def _recall_rule(self):
+        """偽の Jev。思い出した記憶が状態に入っている時だけ、記憶と食い違う案（「千円」と言う案）を落とす。"""
+        def rule(state, name, q):
+            if not name.startswith("c"):
+                return None
+            body = state.split(f"【案{name[1:]}】")[1].split("【案")[0]
+            return 0.1 if ("【思い出した記憶】" in state and "千円" in body) else 0.9
+        return rule
+
+    def test_recalled_memory_contradiction_is_dropped(self):
+        """引いた記憶と食い違う案は、立場チェックで落ちる。矛盾しない案は通る。"""
+        mem = {"覚えていること": "文庫本は店の百円棚に並べる"}
+        a, _, _ = make(self._recall_rule(), FakeLLM([cands("文庫は千円が普通だよ", "文庫は百円棚だよ")]))
+        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards(), recalled=mem))
+        self.assertEqual(out, ["文庫は百円棚だよ"])
+        self.assertIn("思い出した記憶と矛盾していない", json.dumps(a.jev.calls[0][1], ensure_ascii=False))
+        self.assertIn("文庫本は店の百円棚に並べる", a.jev.calls[0][0])
+        # 矛盾する案しか無ければ、書き直して、それでもだめなら黙る
+        a, _, _ = make(self._recall_rule(), FakeLLM([cands("文庫は千円が普通だよ"), cands("文庫は千円だよ")]))
+        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards(), recalled=mem))
+        self.assertIsNone(out)
+        self.assertEqual(len(a.llm.calls), 2)
+
+    def test_no_recall_keeps_current_check(self):
+        """想起が無い返事は、材料も問いも現行のまま（記憶の節も観点も足さない）。"""
+        a, _, _ = make(self._recall_rule(), FakeLLM([cands("文庫は千円が普通だよ")]))
+        out = asyncio.run(writer.write(a.llm, a.jev, a.vault, "あかり", {}, "normal", a.persona.guards(), recalled={}))
+        self.assertEqual(out, ["文庫は千円が普通だよ"])
+        state, qs = a.jev.calls[0]
+        self.assertNotIn("思い出した記憶", state)
+        self.assertNotIn("思い出した記憶", json.dumps(qs, ensure_ascii=False))
+
     def test_system_prompt_follows_edits(self):
         """SOUL.md を Obsidian で直したら、次に書く時の system に入る（再起動しない）。"""
         a, _, _ = make()

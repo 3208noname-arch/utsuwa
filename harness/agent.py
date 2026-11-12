@@ -393,7 +393,7 @@ class Agent:
             s["補足"] = it.note
         log.info("節の字数: %s／記憶 %s", {k: len(v) for k, v in s.items()}, stats)
         return await writer.write(self.llm, self.jev, self.vault, self.about, s, it.kind, self.persona.guards(it.target),
-                                  self.config.get("reactions") or (), mine, lines)
+                                  self.config.get("reactions") or (), mine, lines, mem)
 
     async def recheck(self, it, start_lines, new, draft, allow_rewrite=True):
         """書いている間に会話が進んだ。通す／書き直す／黙る を Jev が選ぶ。Jev が失敗したら黙る。"""

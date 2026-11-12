@@ -101,13 +101,16 @@ def passes(msgs, guards):
     return not any(g.search(m) for g in guards for m in msgs)
 
 
-async def pick(jev, about, log_lines, mine, cands):
+async def pick(jev, about, log_lines, mine, cands, recalled=""):
     """立場チェック。案ごとの Noul を1回で聞き、閾値を超えた中で一番高い案。
-    Jev が失敗したら素通ししない（None を返し、呼び出し側が1回だけ書き直す）。"""
-    qs = {f"c{i}": noul(f"案{i}は、{about}自身の立場から言える発言として筋が通っているか。相手の台詞を代わりに言っていない、"
-                        f"自分（あなた）の最近の発言や会話の事実と食い違っていない、自分の言ったことを相手のせいにしていない。")
+    Jev が失敗したら素通ししない（None を返し、呼び出し側が1回だけ書き直す）。
+    recalled は、この返事を書く時に引いた記憶の節（render 済み）。あれば、それと食い違わないことも見る。"""
+    tail = ("相手の台詞を代わりに言っていない、自分（あなた）の最近の発言や会話の事実と食い違っていない、"
+            "自分の言ったことを相手のせいにしていない。" + ("思い出した記憶と矛盾していない。" if recalled else ""))
+    qs = {f"c{i}": noul(f"案{i}は、{about}自身の立場から言える発言として筋が通っているか。" + tail)
           for i in range(len(cands))}
     state = (f"【会話】\n{log_lines}\n【あなたが最近言ったこと】\n" + ("\n".join(mine) or "（無し）") + "\n" +
+             (f"【思い出した記憶】\n{recalled}\n" if recalled else "") +
              "\n".join(f"【案{i}】\n" + "\n".join(f"あなた: {m}" for m in c) for i, c in enumerate(cands)))
     a = await jev.ask(state, qs)
     if not a:
@@ -117,12 +120,13 @@ async def pick(jev, about, log_lines, mine, cands):
     return (cands[best], score) if score >= POV_MIN else (None, score)
 
 
-async def write(llm, jev, vault, about, sections, kind, guards, reactions=(), mine=(), log_lines=""):
+async def write(llm, jev, vault, about, sections, kind, guards, reactions=(), mine=(), log_lines="", recalled=None):
     """返事を書いて1案を選ぶ。リアクションなら絵文字、文章ならメッセージのリスト。書けなければ None（黙る）。"""
     user = sections_text({**sections, "型": KIND_LABEL[kind], "案の数": str(CANDIDATES)})
     if kind == "reaction" and reactions:
         user += "\n【絵文字の候補】" + " ".join(reactions)
     messages = [{"role": "system", "content": system_prompt(vault)}, {"role": "user", "content": user}]
+    recalled_text = sections_text(recalled or {})
     for attempt in range(2):     # 全部だめなら1回だけ書き直す
         text = await llm.chat(messages)
         cands = parse(text, kind, reactions)
@@ -139,9 +143,9 @@ async def write(llm, jev, vault, about, sections, kind, guards, reactions=(), mi
                 continue
             ok.append(c)
         if ok:
-            chosen, score = await pick(jev, about, log_lines, mine, ok)
+            chosen, score = await pick(jev, about, log_lines, mine, ok, recalled_text)
             if chosen is None and score is None:
-                chosen, score = await pick(jev, about, log_lines, mine, ok)   # Jev の一時失敗かもしれないので、同じ案でもう1回だけ
+                chosen, score = await pick(jev, about, log_lines, mine, ok, recalled_text)   # Jev の一時失敗かもしれないので、同じ案でもう1回だけ
             if chosen:
                 log.info("案%d件（検査を通った%d件）から選んだ（立場 %s）: %s", len(cands), len(ok),
                          None if score is None else round(score, 2), " ｜ ".join(chosen))
