@@ -80,11 +80,19 @@ def _no_diary(off):
         context.diary_rows = saved
 
 
-async def replay(jev, vault, ratings, about, kinds_about=None):
+def brief_of(rating):
+    """評価の context の最後の1行（返信先の最新の発言）から短い材料を作る。話題は評価に残っていないので付けない。"""
+    lines = rating.get("context") or []
+    who, _, text = (lines[-1] if lines else "").partition(": ")
+    return context.make_brief(text, who) if text else ""
+
+
+async def replay(jev, vault, ratings, about, kinds_about=None, kinds_when=None):
     rows = context.lesson_rows(vault)
     results = []
     for rt in ratings:
-        _, picked, stats = await context.select(jev, vault, convo_text(rt), about, rating_day(rt), kinds_about)
+        _, picked, stats = await context.select(jev, vault, convo_text(rt), about, rating_day(rt), kinds_about,
+                                                 kinds_when, brief_of(rt))
         cands = candidates(rows, rt)
         verdict, got = judge(picked, cands)
         results.append({"at": rt.get("at"), "label": rt.get("label"), "comment": rt.get("comment"),
@@ -137,8 +145,9 @@ def main(argv=None):
             return 2
         jev = Jev(key)
     kinds_about = {k: v.get("about", "") for k, v in (config.get("kinds") or {}).items()}
+    kinds_when = {k: v.get("when", "") for k, v in (config.get("kinds") or {}).items()}
     with _no_diary(not a.diary):
-        results = asyncio.run(replay(jev, vault, ratings, config.get("name", "あなた"), kinds_about))
+        results = asyncio.run(replay(jev, vault, ratings, config.get("name", "あなた"), kinds_about, kinds_when))
     print(report(results))
     return 0
 

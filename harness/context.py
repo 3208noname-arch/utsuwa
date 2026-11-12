@@ -77,6 +77,29 @@ def diary_rows(vault, today):
     return rows
 
 
+def short_date(d):
+    """想起に付ける日付。2026-11-09 → 11-09。読めなければ付けない。"""
+    try:
+        return date.fromisoformat(str(d)[:10]).strftime("%m-%d")
+    except ValueError:
+        return ""
+
+
+def _dated(r):
+    d = short_date(r.date)
+    return f"（{d}）" if d else ""
+
+
+def make_brief(text="", name="", topic=""):
+    """種類の段の聞き方B用の短い材料。返信先の最新の発言・返信先の名前・今の話題から組む。空なら ""。"""
+    parts = []
+    if name or text:
+        parts.append(f"{name}の発言: {text}" if name else f"発言: {text}")
+    if topic:
+        parts.append(f"今の話題: {topic}")
+    return "\n".join(parts)
+
+
 def render(rows):
     """選ばれた行を節にする。{節名: 文}。"""
     memo = [r for r in rows if r.kind == "スマホのメモ"]
@@ -87,31 +110,42 @@ def render(rows):
     if known:
         out["覚えていること"] = "\n".join(
             f"- {r.body}" + (f"（{'、'.join(r.people)}に教わった）" if r.people and r.kind != "思い出"
-                             else f"（{'、'.join(r.people)}との出来事）" if r.people else "")
+                             else f"（{'、'.join(r.people)}との出来事）" if r.people else "") + _dated(r)
             for r in known)
     if memo:
         # メモは貼らない。誰に何を教わったかだけを、話題に混ざるきっかけとして渡す（2026-11-04 ユーザー）
-        out["スマホのメモ"] = "\n".join(f"- {'、'.join(r.people) or '誰か'}に「{r.name}」を教わった（メモがある）"
+        out["スマホのメモ"] = "\n".join(f"- {'、'.join(r.people) or '誰か'}に「{r.name}」を教わった（メモがある）{_dated(r)}"
                                     for r in memo)
     if regret:
-        out["前に反省したこと"] = "\n".join(f"- {r.body}" for r in regret)
+        out["前に反省したこと"] = "\n".join(f"- {r.body}{_dated(r)}" for r in regret)
     if diary:
         out["最近の日記"] = "\n".join(f"- {r.date}: {r.body}" for r in diary)
     return out
 
 
-async def select(jev, vault, convo_text, about, today: date, kinds_about=None):
-    """今の会話（convo_text）に関係する記憶を選び、(節, 選んだ行, ログ用の数) を返す。"""
+def kind_question(about, k, kinds_about, kinds_when):
+    desc = [x for x in (kinds_about.get(k), ("要る時: " + kinds_when[k]) if kinds_when.get(k) else "") if x]
+    return noul(f"{about}が、この会話の最後の発言に返事を書く時、「{k}」の記憶"
+                f"{'（' + '。'.join(desc) + '）' if desc else ''}を思い出す必要があるか。")
+
+
+async def select(jev, vault, convo_text, about, today: date, kinds_about=None, kinds_when=None, brief=""):
+    """今の会話（convo_text）に関係する記憶を選び、(節, 選んだ行, ログ用の数) を返す。
+
+    種類の段は、会話文全体（聞き方A）と短い材料 brief（聞き方B。空なら聞かない）の両方で聞き、
+    どちらかで KIND_MIN を超えた種類を通す。行の段は会話文全体で聞く。
+    """
     rows = lesson_rows(vault) + diary_rows(vault, today)
     if not rows:
         return {}, [], {"rows": 0}
     kinds = sorted({r.kind for r in rows})
-    kinds_about = kinds_about or {}
-    q1 = {f"k{i}": noul(f"{about}が、この会話の最後の発言に返事を書く時、「{k}」の記憶"
-                        f"{'（' + kinds_about[k] + '）' if k in kinds_about else ''}を思い出す必要があるか。")
-          for i, k in enumerate(kinds)}
+    kinds_about, kinds_when = kinds_about or {}, kinds_when or {}
+    q1 = {f"k{i}": kind_question(about, k, kinds_about, kinds_when) for i, k in enumerate(kinds)}
     a1 = await jev.ask(convo_text, q1)
     wanted = {k for i, k in enumerate(kinds) if a1.get(f"k{i}", 0) >= KIND_MIN}
+    if brief:
+        b1 = await jev.ask(brief, q1)
+        wanted |= {k for i, k in enumerate(kinds) if b1.get(f"k{i}", 0) >= KIND_MIN}
     cand = [r for r in rows if r.kind in wanted]
     if not cand:
         return {}, [], {"rows": len(rows), "kinds": sorted(wanted)}

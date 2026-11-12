@@ -30,6 +30,10 @@ class Persona:
     def state(self, name, default=None):
         return self.agent.state(name, default)
 
+    def topic_text(self, text):
+        """今の話題（想起の短い材料用）。話題を持たない人格は空。"""
+        return ""
+
     # --- 呼ばれ方 -----------------------------------------------------------
     def names(self):
         """この語が出たら自分が呼ばれた、とみなす正規表現。config.yaml の names から作る。

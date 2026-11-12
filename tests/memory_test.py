@@ -35,12 +35,49 @@ class ContextTest(unittest.TestCase):
         sec, picked, stats = run(context.select(jev, v, "ミナ: 最近コーヒー淹れてる？", "あかり", date(2026, 11, 4)))
         self.assertEqual(sorted(r.kind for r in picked), ["スマホのメモ", "思い出"])
         self.assertEqual(stats["candidates"], 2)        # 絞った種類の行だけを表にした
-        self.assertEqual(sec["スマホのメモ"], "- ミナに「水出しコーヒーの作り方」を教わった（メモがある）")
+        self.assertEqual(sec["スマホのメモ"], "- ミナに「水出しコーヒーの作り方」を教わった（メモがある）（11-03）")
         self.assertNotIn("粉40g", "".join(sec.values()))    # メモの中身は渡さない
         self.assertIn("トオルとの出来事", sec["覚えていること"])
         table = jev.calls[1][0]
         self.assertNotIn("出どころ", table)                 # 会話用には「評価」という語を見せない
         self.assertEqual(len(jev.calls), 2)                 # Jev は2回だけ
+
+    def test_kinds_or_of_full_text_and_brief(self):
+        """聞き方A（会話全体）かB（短い材料）のどちらかで閾値を超えた種類を通す。Bが無ければ聞かない。"""
+        def rule(state, name, q):
+            if name.startswith("k"):
+                text = q["instructions"]
+                if state.startswith("ミナの発言"):                      # B: 短い材料では「常識」だけ通す
+                    return 0.9 if "「常識」" in text else 0.1
+                return 0.9 if "「スマホのメモ」" in text else 0.1       # A: 会話全体ではメモだけ通す
+            return 0.2
+        jev = FakeJev(rule)
+        brief = context.make_brief("コーヒーいくら？", "ミナ", "コーヒー")
+        _, _, stats = run(context.select(jev, Vault(copy_template()), "ミナ: x", "あかり", date(2026, 11, 4),
+                                         brief=brief))
+        self.assertEqual(stats["kinds"], ["スマホのメモ", "常識"])
+        self.assertEqual(len(jev.calls), 3)                              # A、B、行の段
+        self.assertEqual(jev.calls[1][0], "ミナの発言: コーヒーいくら？\n今の話題: コーヒー")
+        jev2 = FakeJev(rule)
+        _, _, st2 = run(context.select(jev2, Vault(copy_template()), "ミナ: x", "あかり", date(2026, 11, 4)))
+        self.assertEqual(st2["kinds"], ["スマホのメモ"])                  # brief 無しなら A だけ
+        self.assertEqual(len(jev2.calls), 2)
+
+    def test_kind_question_has_when(self):
+        q = context.kind_question("あかり", "常識", {"常識": "事実を教える"}, {"常識": "金額の話が出た時"})
+        self.assertIn("事実を教える。要る時: 金額の話が出た時", q["instructions"])
+
+    def test_render_has_dates(self):
+        rows = [context.Row("a", "常識", "n", "2026-11-09", body="レジ袋は3円"),
+                context.Row("b", "反省", "m", "2026-10-26", body="行き過ぎない"),
+                context.Row("c", "スマホのメモ", "r", "2026-11-01", people=["ミナ"]),
+                context.Row("d", "常識", "x", "", body="日付なし")]
+        out = context.render(rows)
+        self.assertIn("- レジ袋は3円（11-09）", out["覚えていること"])
+        self.assertIn("- 日付なし", out["覚えていること"])
+        self.assertTrue(out["覚えていること"].endswith("日付なし"))      # 日付が読めない行には付けない
+        self.assertEqual(out["前に反省したこと"], "- 行き過ぎない（10-26）")
+        self.assertTrue(out["スマホのメモ"].endswith("（11-01）"))
 
     def test_templates_and_inactive_are_not_rows(self):
         v = Vault(copy_template())
