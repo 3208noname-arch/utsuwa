@@ -366,7 +366,7 @@ class Agent:
         gist = digest.recall(self.vault, t.date())
         if gist:     # 固定枠。Jev の選択を介さず、毎回渡す（先頭に更新日）
             s[digest.SECTION] = gist
-        who = people.recall(self.vault, it.target["author"]) if it.target else None
+        who = people.recall(self.vault, it.target["author"], it.target.get("author_id")) if it.target else None
         if who:      # 固定枠。Jev の選択を介さず、返信先の1人分だけ渡す
             s[people.SECTION] = who
         mine = promises.recall(self, it.target["author"] if it.target else None)

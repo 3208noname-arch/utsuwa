@@ -1,7 +1,10 @@
 """人物ページ `05 人物/`。相手ごとに「関係・最近の出来事・約束・呼び名」を物語として持つ。
 
-- `INDEX.md` は表（表示名｜呼び名｜一行要約｜最終更新）。発言者との対応は、発言者の表示名を「表示名」か「呼び名」で引く
-- 1人1ページ `<表示名>.md`。節は 関係／最近の出来事／約束・宣言／呼び名・呼び方
+- `INDEX.md` は表（表示名｜ID｜呼び名｜一行要約｜最終更新）。発言者との対応は、発言者の `author_id` を「ID」で引く。
+  表示名は変わるので、ID が書いてある行は表示名では引かない。ID が空の行（手で書いた行、ID 列の無い古い表）だけ、
+  発言者の表示名を「表示名」か「呼び名」で引き、次の夜の更新で ID を埋める
+- 1人1ページ `<表示名>.md`。ページ名は最初に作った時の表示名のまま変えない（Vault のリンクを切らないため）。
+  表示名が変わったら、新しい表示名を「呼び名」に足す。節は 関係／最近の出来事／約束・宣言／呼び名・呼び方
 - 想起（`recall`）はコードで決まる固定枠。Jev の選択を介さず、返信先の1人分だけを節にして渡す
 - 夜の更新（`update`）は night.py から呼ぶ。書き手は記録用 LLM（`Agents/RECORDER.md` の「人物」）。
   材料はその日の会話の相手の発言、評価コメント、State（人格が `people_facts` で言葉にしたもの）。
@@ -25,7 +28,8 @@ INDEX = f"{FOLDER}/INDEX.md"
 SECTION = "返信先との関係"       # 会話用 LLM に渡す節の名前（AGENTS.md の「渡される節」に載せる）
 KIND = "人物"
 HEAD = ("関係", "最近の出来事", "約束・宣言", "呼び名・呼び方")
-COLS = ("表示名", "呼び名", "一行要約", "最終更新")
+COLS = ("表示名", "ID", "呼び名", "一行要約", "最終更新")
+OLD_COLS = ("表示名", "呼び名", "一行要約", "最終更新")       # ID 列を足す前の表。読む時だけ受ける
 RECALL_CHARS = {"関係": 200, "最近の出来事": 150, "約束・宣言": 100, "呼び名・呼び方": 40}   # 節ごとの上限（想起で渡す字数）
 RECENT_KEEP = 3          # 想起で渡す「最近の出来事」の件数（新しい方）
 LIMITS = {"要約": 60, "関係": 200, "出来事": 80, "約束": 80, "呼び名": 12}
@@ -37,10 +41,11 @@ CHAT_MAX = 30
 
 @dataclass
 class Entry:
-    name: str
+    name: str                # ページ名（最初に作った時の表示名）
     forms: list = field(default_factory=list)
     summary: str = ""
     updated: str = ""
+    uid: str = ""            # 発言者の author_id。空なら、まだ分かっていない
 
     def rel(self):
         return f"{FOLDER}/{safe_name(self.name)}.md"
@@ -51,16 +56,34 @@ def _cells(line):
     return [c.strip() for c in line.strip().strip("|").split("|")]
 
 
+def _cell(s):
+    """表の1マスに書ける形にする。`|` は列の区切りなので全角に、改行は空白にする。"""
+    return str(s or "").replace("|", "｜").replace("\n", " ").replace("\r", " ").strip()
+
+
+def _uid(v):
+    """author_id を文字列に。無い時（None、ログに無くて "None" になったもの）は空。"""
+    s = _cell(v)
+    return "" if s == "None" else s
+
+
 def parse_index(text):
-    """INDEX の表を Entry の並びにする。見出し行と区切り行、列が足りない行は飛ばす。"""
-    out = []
+    """INDEX の表を Entry の並びにする。見出し行と区切り行、列が足りない行は飛ばす。
+    列は見出し行で決める（ID 列の無い古い表も読める）。見出しが無ければ列の数で決める。"""
+    out, cols = [], None
     for line in text.split("\n"):
         if not line.strip().startswith("|"):
             continue
         c = _cells(line)
-        if len(c) < len(COLS) or c[0] == COLS[0] or set(c[0]) <= set("-: ") or not c[0]:
+        if c[0] == COLS[0]:
+            cols = c
             continue
-        out.append(Entry(c[0], [x.strip() for x in re.split(r"[、,]", c[1]) if x.strip()], c[2], c[3]))
+        use = cols or (COLS if len(c) >= len(COLS) else OLD_COLS)
+        if len(c) < len(use) or set(c[0]) <= set("-: ") or not c[0]:
+            continue
+        d = dict(zip(use, c))
+        out.append(Entry(d["表示名"], [x.strip() for x in re.split(r"[、,]", d.get("呼び名", "")) if x.strip()],
+                         d.get("一行要約", ""), d.get("最終更新", ""), _uid(d.get("ID"))))
     return out
 
 
@@ -70,16 +93,26 @@ def index(vault):
 
 
 def render_index(entries):
-    rows = [f"| {e.name} | {'、'.join(e.forms)} | {e.summary.replace('|', '／')} | {e.updated} |" for e in entries]
+    rows = [f"| {_cell(e.name)} | {_uid(e.uid)} | {'、'.join(_cell(f) for f in e.forms)} | "
+            f"{e.summary.replace('|', '／')} | {e.updated} |" for e in entries]
     return "\n".join(["| " + " | ".join(COLS) + " |", "|" + "---|" * len(COLS), *rows])
 
 
-def find(vault, author):
-    """発言者の表示名に当たる Entry。表示名か呼び名の一致（大文字小文字・空白は無視）。無ければ None。"""
-    key = norm(author)
+def find(vault, author, uid=None):
+    """発言者に当たる Entry。無ければ None。
+    uid（author_id）があれば、まず ID の一致で引く（表示名が変わっても同じ人に当たる）。
+    当たらなければ、表示名か呼び名の一致（大文字小文字・空白は無視）で引く。この時、別の ID が書いてある行は
+    別人なので当てない（uid が無い呼び出しでは、どの行も表示名で引ける）。"""
+    ents = index(vault)
+    uid = _uid(uid)
+    if uid:
+        hit = next((e for e in ents if e.uid == uid), None)
+        if hit:
+            return hit
+        ents = [e for e in ents if not e.uid]
+    key = norm(_cell(author))
     if not key:
         return None
-    ents = index(vault)
     return (next((e for e in ents if norm(e.name) == key), None)
             or next((e for e in ents if key in {norm(f) for f in e.forms}), None))
 
@@ -106,9 +139,9 @@ def _bullets(s):
     return [x for x in items if x and x != EMPTY]
 
 
-def recall(vault, author):
-    """返信先の人物ページの要約（節の本文）。ページが無ければ None。"""
-    e = find(vault, author)
+def recall(vault, author, uid=None):
+    """返信先の人物ページの要約（節の本文）。ページが無ければ None。見出しは今の表示名（ページ名は古い表示名のことがある）。"""
+    e = find(vault, author, uid)
     n = vault.note(e.rel()) if e else None
     if not n or str(n.meta.get("status", "active")) != "active":
         return None
@@ -123,7 +156,17 @@ def recall(vault, author):
             parts.append(f"{h}: {text[:RECALL_CHARS[h]]}")
     if not parts:
         return None
-    return (f"{e.name}（{e.summary}）\n" if e.summary else f"{e.name}\n") + "\n".join(parts)
+    who = str(author or "").strip() or e.name
+    return (f"{who}（{e.summary}）\n" if e.summary else f"{who}\n") + "\n".join(parts)
+
+
+def page_name(vault, name, uid):
+    """新しい人のページ名。表示名のまま。同じ名前のページを別の人がもう持っていたら、ID の末尾を足して分ける。"""
+    base = _cell(name)
+    taken = {norm(safe_name(e.name)) for e in index(vault)}
+    if norm(safe_name(base)) in taken and _uid(uid):
+        base = f"{base}_{_uid(uid)[-4:]}"
+    return base
 
 
 def render_page(name, d, created, forms):
@@ -195,9 +238,10 @@ def day_ratings(vault, day, name):
 async def propose(agent, day, uid, name, says):
     """1人分の更新案を作る。(Entry 向けの dict, ページの meta, 本文) か None。保存はしない。"""
     v = agent.vault
-    if norm(safe_name(name)) in {"", "index"}:
+    e = find(v, name, uid)
+    page = e.name if e else page_name(v, name, uid)       # ページ名は、表示名が変わっても最初のまま
+    if norm(safe_name(page)) in {"", "index"}:
         return None
-    e = find(v, name)
     old = v.note(e.rel()) if e else None
     facts = agent.persona.people_facts(uid, name, day, "\n".join(says))
     rated = day_ratings(v, day, name)
@@ -212,11 +256,13 @@ async def propose(agent, day, uid, name, says):
         log.info("人物ページを保存しない（%s）: %s", why, name)
         return None
     kept = parse_page(old.body).get("呼び名・呼び方", "") if old else ""
-    forms = list(dict.fromkeys(_bullets(kept) + d["呼び名"]))
+    renamed = [_cell(name)] if norm(_cell(name)) != norm(page) else []      # 表示名が変わった。今の表示名を呼び名に残す
+    forms = list(dict.fromkeys(renamed + _bullets(kept) + d["呼び名"]))
     forms = forms[:FORMS_MAX + 2]
     created = old.meta.get("date") if old and old.meta.get("date") else day
-    meta, body = render_page(name, d, created, forms)
-    return {"entry": Entry(name, forms, d["要約"], day.isoformat()), "meta": meta, "body": body}
+    meta, body = render_page(page, d, created, forms)
+    return {"entry": Entry(page, forms, d["要約"], day.isoformat(), _uid(uid) or (e.uid if e else "")),
+            "meta": meta, "body": body}
 
 
 def save(vault, proposal):
