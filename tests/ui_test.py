@@ -55,7 +55,7 @@ class UiTest(unittest.TestCase):
         root = copy_template()
         as_nagi(root)
         before = snapshot(root)
-        fetch(root, "/api/state", "/api/chat")
+        fetch(root, "/api/state", "/api/chat", "/api/promises", "/api/digest", "/api/persons", "/api/night")
         self.assertEqual(snapshot(root), before)
 
     def test_chat_reads_the_day_and_refuses_paths(self):
@@ -68,6 +68,62 @@ class UiTest(unittest.TestCase):
         self.assertEqual(got["days"][0], "2026-11-05")
         self.assertEqual(got["rows"][0]["text"], "起きてる？")
         self.assertEqual(bad["rows"], [])
+
+    def test_memory_layers_say_empty_and_off(self):
+        """夜の部品がオフで何も作られていない時は、空と、オフであることが分かる。"""
+        pr, dg, ps, nt = fetch(copy_template(), "/api/promises", "/api/digest", "/api/persons", "/api/night")
+        self.assertEqual((pr["exists"], pr["on"], pr["open"], pr["closed"]), (False, False, [], []))
+        self.assertEqual((dg["exists"], dg["on"], dg["sections"]), (False, False, []))
+        self.assertEqual((ps["exists"], ps["on"], ps["items"]), (True, False, []))
+        self.assertEqual((nt["days"], nt["runs"]), ([], []))
+
+    def test_promises_open_by_due_then_closed_by_date(self):
+        root = copy_template()
+        row = lambda i, st, due, made: {"id": i, "内容": i, "相手": "", "種類": "約束", "期限": due, "状態": st, "作られた日": made}
+        Vault(root).write_json("02 State/約束.json", [row("a", "未完了", "", "2026-11-10"), row("b", "済み", "", "2026-11-09"),
+                                                      row("c", "未完了", "2026-11-20", "2026-11-11"), row("d", "流れた", "", "2026-11-12"),
+                                                      row("e", "未完了", "2026-11-15", "2026-11-12")])
+        got = fetch(root, "/api/promises")[0]
+        self.assertEqual([r["id"] for r in got["open"]], ["e", "c", "a"])
+        self.assertEqual([r["id"] for r in got["closed"]], ["d", "b"])
+
+    def test_broken_files_do_not_break_the_page(self):
+        root = copy_template()
+        os.makedirs(f"{root}/03 Logs/night", exist_ok=True)
+        for rel in ("02 State/約束.json", "03 Logs/night/2026-11-12.json"):
+            Vault(root).write_text(rel, "{壊れ")
+        pr, nt = fetch(root, "/api/promises", "/api/night")
+        self.assertIn("約束.json", pr["broken"])
+        self.assertEqual(pr["open"], [])
+        self.assertIn("2026-11-12", nt["broken"])
+
+    def test_digest_and_persons_show_sections(self):
+        root = copy_template()
+        v = Vault(root)
+        v.write_text("02 State/近況.md", "---\ndate: 2026-11-12\nstatus: active\n---\n"
+                                         "# 体と生活\n寝不足\n\n# 進行中のこと\n\n# 最近の流れ\n落ち着いた\n")
+        v.write_text("05 人物/INDEX.md", "| 表示名 | ID | 呼び名 | 一行要約 | 最終更新 |\n|---|---|---|---|---|\n"
+                                        "| トオル | 42 | トオくん、トオル | 常連 | 2026-11-12 |\n| ミサ |  |  | 初対面 | 2026-11-11 |\n")
+        v.write_text("05 人物/トオル.md", "---\nstatus: active\n---\n# 関係\n古い友人\n\n# 最近の出来事\n- 猫の話\n")
+        dg, ps = fetch(root, "/api/digest", "/api/persons")
+        self.assertEqual(dg["date"], "2026-11-12")
+        self.assertEqual([x["head"] for x in dg["sections"]], ["体と生活", "最近の流れ"])
+        toru, misa = ps["items"]
+        self.assertEqual((toru["id"], toru["forms"], toru["page"]), ("42", ["トオくん", "トオル"], True))
+        self.assertEqual(toru["sections"][1], {"head": "最近の出来事", "body": "- 猫の話"})
+        self.assertEqual((misa["page"], misa["sections"]), (False, []))
+
+    def test_night_reads_the_day_newest_run_first_and_refuses_paths(self):
+        root = copy_template()
+        os.makedirs(f"{root}/03 Logs/night", exist_ok=True)
+        for day, at in (("2026-11-11", "a"), ("2026-11-12", "b")):
+            Vault(root).write_json(f"03 Logs/night/{day}.json", {"date": day, "runs": [{"at": at + "1", "errors": {}},
+                                                                                     {"at": at + "2", "errors": {"people": "X: y"}}]})
+        new, old, bad = fetch(root, "/api/night", "/api/night?day=2026-11-11", "/api/night?day=..%2F..%2FAgents%2Fconfig")
+        self.assertEqual((new["day"], new["days"]), ("2026-11-12", ["2026-11-12", "2026-11-11"]))
+        self.assertEqual([r["at"] for r in new["runs"]], ["b2", "b1"])
+        self.assertEqual(old["runs"][0]["errors"], {"people": "X: y"})
+        self.assertEqual(bad["runs"], [])
 
     def test_notes_draft_then_post_only_once(self):
         root = copy_template()

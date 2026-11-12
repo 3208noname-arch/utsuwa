@@ -18,9 +18,9 @@ import yaml
 from aiohttp import web
 
 from harness.__main__ import load_env
-from harness import __version__, context
+from harness import __version__, context, digest, people, promises
 from harness.agent import STARTS_PER_DAY, TOTAL_DAILY_MAX, Agent, day_key
-from harness.night import INACTIVE
+from harness.night import INACTIVE, part_on
 from harness.vault import Vault
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -108,6 +108,64 @@ def read_chat(root, day):
     return {"days": days, "day": day,
             "rows": [{"at": r["at"], "author": r.get("author"), "text": r.get("text"), "me": r.get("me", False),
                       "shadow": str(r.get("channel")) in shadow} for r in reversed(rows[-CHAT_MAX:])]}
+
+
+def json_or(vault, rel, default):
+    """JSON を読む。壊れていたら default と、壊れている旨。"""
+    try:
+        return vault.json(rel, default), ""
+    except ValueError as e:
+        return default, f"{rel} を読めない（{e}）"
+
+
+def night_on(root, name):
+    """夜の部品 name がオンか（config の night.write と night.parts から）。"""
+    return part_on(Agent(Vault(root), None, None, None).config.get("night") or {}, name)
+
+
+def read_promises(root):
+    """約束の台帳。未完了を期限の近い順（期限なしは後）、済みと流れたは新しい順。"""
+    rel = f"02 State/{promises.NAME}.json"
+    vault = Vault(root)
+    rows, broken = json_or(vault, rel, None)
+    items = [r for r in rows if isinstance(r, dict)] if isinstance(rows, list) else []
+    open_ = sorted((r for r in items if r.get("状態") == promises.OPEN),
+                   key=lambda r: (not r.get("期限"), r.get("期限") or "", r.get("作られた日") or ""))
+    rest = sorted((r for r in items if r.get("状態") != promises.OPEN), key=lambda r: r.get("作られた日") or "", reverse=True)
+    return {"exists": vault.exists(rel), "broken": broken, "on": night_on(root, "promises"), "open": open_, "closed": rest}
+
+
+def read_digest(root):
+    n = Vault(root).note(digest.REL)
+    sec = people.parse_page(n.body) if n else {}
+    return {"exists": bool(n), "on": night_on(root, "digest"), "date": str(n.meta.get("date") or "") if n else "",
+            "status": str(n.meta.get("status", "active")) if n else "",
+            "sections": [{"head": h, "body": sec[h]} for h in sec if sec[h]]}
+
+
+def read_persons(root):
+    """人物ページの INDEX と、各ページの節。"""
+    vault = Vault(root)
+    items = []
+    for e in people.index(vault):
+        n = vault.note(e.rel())
+        sec = people.parse_page(n.body) if n else {}
+        items.append({"name": e.name, "id": e.uid, "forms": e.forms, "summary": e.summary, "updated": e.updated,
+                      "page": bool(n), "status": str(n.meta.get("status", "active")) if n else "",
+                      "sections": [{"head": h, "body": sec[h]} for h in sec if sec[h]]})
+    return {"exists": vault.exists(people.INDEX), "on": night_on(root, "people"), "items": items}
+
+
+def read_night(root, day):
+    """夜の報告。day が無ければ一番新しい日。"""
+    files = glob.glob(os.path.join(root, "03 Logs", "night", "*.json"))
+    days = sorted((os.path.basename(p)[:-5] for p in files), reverse=True)
+    day = day or (days[0] if days else "")
+    runs, broken = [], ""
+    if day in days:
+        data, broken = json_or(Vault(root), f"03 Logs/night/{day}.json", {})
+        runs = list(reversed(data.get("runs") or [])) if isinstance(data, dict) else []
+    return {"days": days, "day": day, "broken": broken, "runs": runs}
 
 
 def add_topic_request(agent, body, plot):
@@ -284,6 +342,18 @@ def app(root):
         out = await run("journalctl", "-u", unit_name(root), "-n", str(n), "--no-pager", "-o", "short-iso")
         return web.json_response({"lines": (out or "").splitlines()})
 
+    async def promises_get(_):
+        return web.json_response(await asyncio.to_thread(read_promises, root))
+
+    async def digest_get(_):
+        return web.json_response(await asyncio.to_thread(read_digest, root))
+
+    async def persons(_):
+        return web.json_response(await asyncio.to_thread(read_persons, root))
+
+    async def night(req):
+        return web.json_response(await asyncio.to_thread(read_night, root, req.query.get("day")))
+
     async def plot(req):
         if req.content_type != "application/json":      # 別のページからのフォーム送信を受けない
             raise web.HTTPUnsupportedMediaType()
@@ -301,7 +371,9 @@ def app(root):
                   web.post("/api/plot", plot), web.get("/api/notes", notes_get), web.post("/api/notes", notes_new),
                   web.put("/api/notes/{id}", notes_put), web.delete("/api/notes/{id}", notes_delete),
                   web.post("/api/notes/{id}/post", notes_post), web.get("/api/ratings", ratings),
-                  web.get("/api/lessons", lessons), web.post("/api/lessons/off", lessons_off), web.get("/api/info", info)])
+                  web.get("/api/lessons", lessons), web.post("/api/lessons/off", lessons_off), web.get("/api/info", info),
+                  web.get("/api/promises", promises_get), web.get("/api/digest", digest_get),
+                  web.get("/api/persons", persons), web.get("/api/night", night)])
     return a
 
 

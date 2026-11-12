@@ -99,6 +99,7 @@ pre.log{white-space:pre-wrap;word-break:break-all;font:12px/1.55 ui-monospace,Me
   background:var(--surface);border:1px solid var(--line);border-radius:12px;padding:12px}
 
 .btn.del{margin-top:8px}
+.pre{white-space:pre-wrap}
 .chips{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
 .rows li.line p{margin:4px 0 0}
 .rows li.line .mute{font-size:13px}
@@ -158,6 +159,28 @@ details.sleep>summary{cursor:pointer;color:var(--mute);padding:8px 2px}
 </section>
 
 <section class="view" id="v-people"><div id="people"></div></section>
+
+<section class="view" id="v-persons">
+  <p class="facts" id="personsNote"></p>
+  <div class="person-list" id="persons"></div>
+</section>
+
+<section class="view" id="v-digest">
+  <p class="facts" id="digestNote"></p>
+  <ul class="rows" id="digest"></ul>
+</section>
+
+<section class="view" id="v-promises">
+  <p class="facts" id="promNote"></p>
+  <h2>未完了</h2><ul class="rows" id="promOpen"></ul>
+  <details class="sleep" id="promClosedBox"><summary id="promClosedSum"></summary><ul class="rows" id="promClosed"></ul></details>
+</section>
+
+<section class="view" id="v-night">
+  <div class="tools"><select id="nightDay" aria-label="日付"></select></div>
+  <p class="status" id="nightMsg" role="status"></p>
+  <div id="nightRuns"></div>
+</section>
 
 <section class="view" id="v-plot">
   <div class="plotbar">
@@ -254,9 +277,9 @@ const TABS = [
   ["plot", "話題", '<svg viewBox="0 0 24 24"><path d="M4 4v16h16"/><circle cx="10" cy="14" r="1.6"/><circle cx="15" cy="8" r="1.6"/><circle cx="18" cy="14" r="1.6"/></svg>'],
   ["rec", "記録", '<svg viewBox="0 0 24 24"><path d="M7 4h10v16H7z"/><path d="M10 8h4M10 12h4M10 16h2"/></svg>'],
 ];
-const SUBS = {now: [["now", "様子"], ["mech", "仕組み"]], people: [["people", "人"]],
-              plot: [["plot", "話題"], ["lessons", "教わったこと"]],
-              rec: [["rate", "評価"], ["log", "ログ"], ["notes", "お知らせ"], ["info", "情報"]]};
+const SUBS = {now: [["now", "様子"], ["mech", "仕組み"]], people: [["people", "人"], ["persons", "人物ページ"]],
+              plot: [["plot", "話題"], ["lessons", "教わったこと"], ["digest", "近況"], ["promises", "約束"]],
+              rec: [["night", "夜"], ["rate", "評価"], ["log", "ログ"], ["notes", "お知らせ"], ["info", "情報"]]};
 let cur = {tab: "now", subs: {}, log: "chat", dim: 2, x: null, y: null, z: null};
 try { cur = {...cur, ...JSON.parse(localStorage.getItem("utsuwa-ui") || "{}")}; } catch {}
 if (!TABS.some(x => x[0] === cur.tab)) cur.tab = "now";
@@ -283,6 +306,10 @@ function render() {
   if (v === "lessons") loadLessons();
   if (v === "rate") loadRatings();
   if (v === "info") loadInfo();
+  if (v === "persons") loadPersons();
+  if (v === "digest") loadDigest();
+  if (v === "promises") loadPromises();
+  if (v === "night") loadNight();
   try { localStorage.setItem("utsuwa-ui", JSON.stringify(cur)); } catch {}
 }
 document.addEventListener("click", e => {
@@ -634,6 +661,61 @@ async function loadRatings() {
     <p>${esc(r.text)}</p>${r.comment ? `<p><b>→ ${esc(r.comment)}</b></p>` : ""}${r.state ? `<p class="mute">その時: ${esc(r.state)}</p>` : ""}
     ${r.context?.length ? `<details><summary class="mute">前後の会話</summary><p class="mute">${r.context.map(esc).join("<br>")}</p></details>` : ""}</li>`).join("") || none("まだ無い");
 }
+
+// --- 新しい記憶の層（読むだけ）---
+const offNote = (on, part) => on ? "" : `夜の部品 ${part} はオフ（config の night.parts）。`;
+const secRows = secs => secs.map(x => `<li class="line"><b>${esc(x.head)}</b><p class="pre">${esc(x.body)}</p></li>`).join("");
+
+async function loadPersons() {
+  const d = await json("api/persons");
+  $("#personsNote").textContent = (d.exists ? `${d.items.length}人。` : "05 人物/INDEX.md はまだ無い。") + offNote(d.on, "people");
+  $("#persons").innerHTML = d.items.map(p => `<details class="person"><summary><span><b>${esc(p.name)}</b>
+    <span class="mute">${esc(p.forms.join("、"))}</span></span><span class="mute">${esc(p.summary)}</span><span class="mute">${esc(p.updated)}</span></summary>
+    <p class="mute">ID: ${esc(p.id || "（まだ無い）")}${p.status && p.status !== "active" ? "・" + esc(p.status) : ""}</p>
+    <ul class="rows">${p.page ? secRows(p.sections) || none("ページは空") : none("ページはまだ無い")}</ul></details>`).join("")
+    || `<p class="empty-note">まだ誰のページも無い。</p>`;
+}
+
+async function loadDigest() {
+  const d = await json("api/digest");
+  const gap = d.date ? Math.round((new Date(state?.now || Date.now()) - new Date(d.date)) / 86400000) : null;
+  $("#digestNote").textContent = (d.exists ? `${d.date || "更新日不明"}${gap !== null && gap > 0 ? `（${gap}日前）` : gap === 0 ? "（今日）" : ""} 更新${d.status !== "active" ? "・" + d.status + "（会話には渡さない）" : ""}。`
+    : "02 State/近況.md はまだ無い。") + offNote(d.on, "digest");
+  $("#digest").innerHTML = secRows(d.sections) || none("まだ無い");
+}
+
+async function loadPromises() {
+  const d = await json("api/promises");
+  const row = r => `<li class="line"><span class="chip">${esc(r["種類"])}</span>${r["状態"] !== "未完了" ? `<span class="chip">${esc(r["状態"])}</span>` : ""} <b>${esc(r["内容"])}</b>
+    <span class="mute">${r["相手"] ? esc(r["相手"]) + "へ・" : ""}${r["期限"] ? "期限 " + esc(r["期限"]) + "・" : ""}${esc(r["作られた日"])}作成・${esc(r.id)}</span></li>`;
+  $("#promNote").textContent = (d.broken || (d.exists ? `未完了 ${d.open.length}件、済み・流れた ${d.closed.length}件。` : "02 State/約束.json はまだ無い。")) + offNote(d.on, "promises");
+  $("#promOpen").innerHTML = d.open.map(row).join("") || none("無い");
+  $("#promClosedSum").textContent = `済み・流れた（${d.closed.length}）`;
+  $("#promClosed").innerHTML = d.closed.map(row).join("") || none("無い");
+}
+
+async function loadNight(day) {
+  const d = await json("api/night" + (day ? "?day=" + encodeURIComponent(day) : ""));
+  $("#nightDay").innerHTML = d.days.map(x => `<option${x === d.day ? " selected" : ""}>${esc(x)}</option>`).join("");
+  $("#nightDay").hidden = !d.days.length;
+  $("#nightMsg").textContent = d.broken;
+  const NAMES = {diary: "日記", lessons: "教わったこと", people: "人物", digest: "近況", promises: "約束"};
+  const run = r => {
+    const errs = Object.entries(r.errors || {});
+    const parts = Object.keys({...NAMES, ...(r.parts_on || {}), ...(r.parts || {})}).map(k => {
+      const c = (r.parts || {})[k] || {}, on = (r.parts_on || {})[k];
+      return `<li><span class="t">${esc(NAMES[k] || k)}</span><span>${on ? "オン" : "オフ（ログだけ）"}${r.errors?.[k] ? ` <b class="neg">失敗</b>` : ""}</span>
+        <span class="d">${c.generated ?? "-"} / ${c.saved ?? "-"} / ${c.skipped ?? "-"}</span></li>`;
+    }).join("");
+    return `<h2>${esc(String(r.at).slice(11, 16) || r.at)} の実行${r.write ? "（write: true）" : "（write: false）"}</h2>
+      <p class="mute">生成 / 保存 / 見送り。「その他」の記憶 ${esc(r.other ?? "-")}件。</p>
+      <ul class="rows">${parts}</ul>
+      ${errs.length ? `<ul class="rows">${errs.map(([k, v]) => `<li class="line"><b class="neg">${esc(NAMES[k] || k)} の例外</b><p>${esc(v)}</p></li>`).join("")}</ul>` : `<p class="mute">例外は無い。</p>`}`;
+  };
+  $("#nightRuns").innerHTML = d.runs.map(run).join("")
+    || `<p class="empty-note">${d.days.length ? "この日の実行は無い。" : "夜の報告はまだ無い（03 Logs/night/ が空。夜の整理が一度も動いていない）。"}</p>`;
+}
+$("#nightDay").addEventListener("change", e => loadNight(e.target.value));
 
 // --- 情報 ---
 async function loadInfo() {
