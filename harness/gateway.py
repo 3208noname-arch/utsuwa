@@ -133,17 +133,18 @@ class Gateway(discord.Client):
             except discord.HTTPException:
                 target = None
         for i, text in enumerate(texts):
-            secs = typing[i] if i < len(typing) else 0
-            if secs:
-                async with ch.typing():
-                    await asyncio.sleep(secs)
+            # 入力中の表示も含めて包む。2通目の前で何が起きても、送れた1通目の ID は返す
             try:
+                secs = typing[i] if i < len(typing) else 0
+                if secs:
+                    async with ch.typing():
+                        await asyncio.sleep(secs)
                 if i == 0 and target:
                     sent = await target.reply(text, mention_author=False)
                 else:
                     sent = await ch.send(text)
-            except discord.HTTPException as e:
-                log.error("送れなかった（%d通目）: %s", i + 1, e)
+            except Exception as e:
+                log.error("送れなかった（%d通目）: %r", i + 1, e)
                 break
             ids.append(str(sent.id))
         return ids

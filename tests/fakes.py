@@ -65,23 +65,35 @@ class FakeSender:
         self.agent = None
         self.n, self.other = 0, 0
         self.fail = False              # 真の間は送れない（Discord のチャンネルが無い・権限が無い時の代わり）
+        self.raise_at = None           # 1回の send の n 通目の前で例外（入力中の表示や接続の失敗の代わり）
+        self.stop_at = None            # 1回の send の n 通目以降は送れない
 
     async def send(self, channel, texts, reply_to=None, typing=()):
-        """本物と同じく、送れた発言の ID のリストを返す。fail が真なら送らずに None（チャンネルが無い時と同じ）。"""
+        """本物と同じく、送れた発言の ID のリストを返す。fail が真なら送らずに None（チャンネルが無い時と同じ）。
+        途中で失敗したら、本物（gateway.send）と同じく例外を外へ出さず、送れた分の ID だけを返す。"""
         if self.fail:
             return None
-        self.sent.append((channel, list(texts), reply_to))
-        ids = []
-        if self.agent and self.agent.channel_mode(channel) == "live":
-            for t in texts:
+        live = self.agent and self.agent.channel_mode(channel) == "live"
+        ids, done = [], []
+        for i, t in enumerate(texts, 1):
+            try:
+                if self.raise_at == i:
+                    raise ConnectionResetError("typing に失敗")
+                if self.stop_at is not None and i >= self.stop_at:
+                    break
+            except Exception:
+                break
+            done.append(t)
+            if live:
                 self.n += 1
                 ids.append(f"me{self.n}")
                 await self.agent.on_message(msg(f"me{self.n}", channel, "Akari", t, me=True, bot=True,
                                                 at=self.agent.now()))
-        else:
-            for _ in texts:
+            else:
                 self.other += 1
                 ids.append(f"out{self.other}")
+        if done:
+            self.sent.append((channel, done, reply_to))
         return ids
 
     async def react(self, channel, message_id, emoji):

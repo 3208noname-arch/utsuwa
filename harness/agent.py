@@ -390,9 +390,12 @@ class Agent:
             self.persona.on_delivered(it, out)
             return
         ids = [str(x) for x in sent]
-        if len(ids) < len(out):        # 途中で送れなくなった。送れた分だけを残す
-            text = "\n".join(out[:len(ids)])
-        self._said(it, trace, text, message_ids=ids)
+        partial = len(ids) < len(out)
+        if partial:                    # 途中で送れなくなった。送れた分だけを残し、送れた分だけで体・約束・出費を動かす
+            out = out[:len(ids)]
+            text = "\n".join(out)
+            trace["partial"] = True
+        self._said(it, trace, text, message_ids=ids, **({"partial": True} if partial else {}))
         self.write_trace(trace, "sent", text=text, message_ids=ids)
         self.persona.on_delivered(it, out)
         qs = self.persona.sent_questions(out)
@@ -633,7 +636,8 @@ class Agent:
         if said and compared and said.get("target_id"):            # 前後の会話は、元のチャンネルから引く
             channel, message_id, at = said["channel"], said["target_id"], said["at"]
         around = self.logs.around(channel, message_id, at)
-        rec = {**rec, "text": text, "context": [f"{m['author']}: {m['text']}" for m in around]}
+        rec = {**rec, "text": text, "context": [f"{m['author']}: {m['text']}" for m in around],
+               "said_id": said.get("id") if said else None}    # prompts の trace を引く鍵（古い行と自分以外は None）
         if said:
             rec.update(state=said.get("state"), version=said.get("version"), source=said.get("source"))
         self.logs.rating(rec)
