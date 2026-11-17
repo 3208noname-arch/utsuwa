@@ -180,10 +180,15 @@ class Nagi(Persona):
         mood.settle(m, t, base)
         words = re.sub(r"（.*）$", "", mood.as_words(m, base))
         parts = [self.presence(t).label, words, f"眠気{round(body.felt_sleepy(self.b, t))} 空腹{round(self.b['hunger'])} "
-                                                f"気力{round(self.b['energy'])}"]
+                                                f"気力{round(self.b['energy'])}",
+                 f"残高{self.b['money']:,}円 今日使った{body.spent_today(self.b, t):,}円 "
+                 f"今日使ってよい{int(body.allowance(self.b, t)):,}円"]
         like = self.likes.data.get(str(target))
         if like:
             parts.append(f"相手への好感度{like.get('v', 0):+.1f}")
+        grudge = self.anger_of(target) if target else 0.0
+        if grudge:
+            parts.append(f"相手への怒り{grudge:.0f}")
         return "・".join(parts + [f"気分{m['v']:+.0f}"])
 
     def view_mechs(self, t):

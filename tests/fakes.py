@@ -46,12 +46,15 @@ class FakeLLM:
         self.calls = []
 
     async def chat(self, messages, temperature=1.0):
+        """本物と同じく (本文, 答えたモデル名)。本文が None なら全滅の扱い。"""
         self.calls.append(messages)
         if self.delays:
             await asyncio.sleep(self.delays.pop(0))
         if callable(self.responses):
-            return self.responses(messages)
-        return self.responses.pop(0) if self.responses else None
+            text = self.responses(messages)
+        else:
+            text = self.responses.pop(0) if self.responses else None
+        return text, (None if text is None else "fake")
 
 
 class FakeSender:
@@ -60,18 +63,32 @@ class FakeSender:
     def __init__(self):
         self.sent, self.reactions, self.notes = [], [], []
         self.agent = None
-        self.n = 0
+        self.n, self.other = 0, 0
+        self.fail = False              # 真の間は送れない（Discord のチャンネルが無い・権限が無い時の代わり）
 
     async def send(self, channel, texts, reply_to=None, typing=()):
+        """本物と同じく、送れた発言の ID のリストを返す。fail が真なら送らずに None（チャンネルが無い時と同じ）。"""
+        if self.fail:
+            return None
         self.sent.append((channel, list(texts), reply_to))
+        ids = []
         if self.agent and self.agent.channel_mode(channel) == "live":
             for t in texts:
                 self.n += 1
+                ids.append(f"me{self.n}")
                 await self.agent.on_message(msg(f"me{self.n}", channel, "Akari", t, me=True, bot=True,
                                                 at=self.agent.now()))
+        else:
+            for _ in texts:
+                self.other += 1
+                ids.append(f"out{self.other}")
+        return ids
 
     async def react(self, channel, message_id, emoji):
+        if self.fail:
+            return None
         self.reactions.append((channel, message_id, emoji))
+        return str(message_id)
 
     async def notify(self, text):
         self.notes.append(text)

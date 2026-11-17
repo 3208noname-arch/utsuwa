@@ -249,7 +249,7 @@ async def propose(agent, day, uid, name, says):
             f"\n【その日の{name}の発言】\n" + "\n".join(f"- {x[:120]}" for x in says[-CHAT_MAX:]) +
             "\n【その日の評価コメント】\n" + ("\n".join(f"- {x}" for x in rated) or "（無し）") +
             "\n【その日の状態】\n" + ("\n".join(f"- {x}" for x in facts) or "（無し）"))
-    text = await agent.llm.chat([{"role": "system", "content": v.text("Agents/RECORDER.md")},
+    text, _ = await agent.llm.chat([{"role": "system", "content": v.text("Agents/RECORDER.md")},
                                  {"role": "user", "content": user}], temperature=0)
     d, why = clean(loads(text), user)
     if why:

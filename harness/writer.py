@@ -166,15 +166,24 @@ def sleep_mismatch(msgs, now=""):
     return None
 
 
+def guard_hit(msgs, guards):
+    """案に当たったガードの正規表現（の文字列）。当たらなければ None。"""
+    for g in guards:
+        if any(g.search(m) for m in msgs):
+            return g.pattern
+    return None
+
+
 def passes(msgs, guards):
-    return not any(g.search(m) for g in guards for m in msgs)
+    return guard_hit(msgs, guards) is None
 
 
-async def pick(jev, about, log_lines, mine, cands, recalled="", now=""):
+async def pick(jev, about, log_lines, mine, cands, recalled="", now="", trace=None):
     """立場チェック。案ごとの Noul を1回で聞き、閾値を超えた中で一番高い案。
     Jev が失敗したら素通ししない（None を返し、呼び出し側が1回だけ書き直す）。
     recalled は、この返事を書く時に引いた記憶の節（render 済み）。あれば、それと食い違わないことも見る。
-    観点「帰属」は【会話】だけで見る。now は【今】の節（日付・曜日・時間帯）で、あれば時間帯の言葉も見る（睡眠の計算は Jev に判別できないので sleep_mismatch が見る）。"""
+    観点「帰属」は【会話】だけで見る。now は【今】の節（日付・曜日・時間帯）で、あれば時間帯の言葉も見る（睡眠の計算は Jev に判別できないので sleep_mismatch が見る）。
+    trace（list）を渡すと、案ごとの点数を1件足す（Jev が失敗した時は空の点数）。"""
     tail = ("相手の台詞を代わりに言っていない、自分（あなた）の最近の発言や会話の事実と食い違っていない、"
             "自分の言ったことを相手のせいにしていない。"
             "案が触れている発言・呼びかけ・呼び名について、言った人と宛先が会話の記録と合っている。"
@@ -186,6 +195,8 @@ async def pick(jev, about, log_lines, mine, cands, recalled="", now=""):
              (f"【思い出した記憶】\n{recalled}\n" if recalled else "") +
              "\n".join(f"【案{i}】\n" + "\n".join(f"あなた: {m}" for m in c) for i, c in enumerate(cands)))
     a = await jev.ask(state, qs)
+    if trace is not None:
+        trace.append({f"案{i}": a.get(f"c{i}") for i in range(len(cands))})
     if not a:
         return None, None
     best = max(range(len(cands)), key=lambda i: a.get(f"c{i}", 0))
@@ -194,44 +205,64 @@ async def pick(jev, about, log_lines, mine, cands, recalled="", now=""):
 
 
 async def write(llm, jev, vault, about, sections, kind, guards, reactions=(), mine=(), log_lines="", recalled=None,
-                drop_stray=False, faded=()):
+                drop_stray=False, faded=(), trace=None):
     """返事を書いて1案を選ぶ。リアクションなら絵文字、文章ならメッセージのリスト。書けなければ None（黙る）。
     drop_stray は、節と会話に無い数字（stray_numbers）を含む案を落とすか。False の間はログに出すだけで案は残す
-    （「あと3時間でバイト」「500円貸して」のような普通の数字も引っかかるので、既定はログだけ。config.yaml の number_check）。"""
+    （「あと3時間でバイト」「500円貸して」のような普通の数字も引っかかるので、既定はログだけ。config.yaml の number_check）。
+    trace（dict）を渡すと、書いた過程（答えたモデル、案、落とした理由、立場の点数、書き直したか）を足す。"""
+    tr = trace if trace is not None else {}
+    tr["attempts"], tr["rewrote"] = [], False    # pick の点数の「案i」は、その回の passed の i 番目
     user = sections_text({**sections, "型": KIND_LABEL[kind], "案の数": str(CANDIDATES)})
     if kind == "reaction" and reactions:
         user += "\n【絵文字の候補】" + " ".join(reactions)
     messages = [{"role": "system", "content": system_prompt(vault)}, {"role": "user", "content": user}]
     recalled_text = sections_text(recalled or {})
     for attempt in range(2):     # 全部だめなら1回だけ書き直す
-        text = await llm.chat(messages)
+        text, model = await llm.chat(messages)
         cands = parse(text, kind, reactions)
+        at = {"model": model, "raw": text, "candidates": cands, "dropped": [], "pick": []}
+        tr["attempts"].append(at)
         if kind == "reaction":
-            return cands[0] if cands else None
+            at["chosen"] = cands[0] if cands else None
+            return at["chosen"]
         allowed = user + "\n" + log_lines + "\n" + "\n".join(mine)
         ok = []
-        for c in cands:
-            if not passes(c, guards):
+
+        def drop(i, why, detail):
+            at["dropped"].append({"candidate": i, "why": why, "detail": detail})
+
+        for i, c in enumerate(cands):
+            hit = guard_hit(c, guards)
+            if hit:
+                drop(i, "guard", hit)
                 continue
             fab = leaked(c, faded, allowed) if faded else []
             if fab:
                 log.info("数字チェック: 思い出せない記憶（本文を渡していない行）の数字・日付 %s を含む案を落とした: %s", fab, " ｜ ".join(c))
+                drop(i, "leaked", fab)
                 continue
             stray = stray_numbers(c, allowed)
             if stray and drop_stray:
                 log.info("数字チェック: 節と会話に無い数字 %s を含む案を落とした: %s", stray, " ｜ ".join(c))
+                drop(i, "stray", stray)
                 continue
             if stray:
                 log.info("数字チェック（ログだけ）: 節と会話に無い数字 %s を含む案: %s", stray, " ｜ ".join(c))
+                at.setdefault("stray", []).append({"candidate": i, "numbers": stray})
             bad = sleep_mismatch(c, sections.get("今", ""))
             if bad:
                 log.info("数字チェック: 睡眠の計算が合わない案を落とした: %s", bad)
+                drop(i, "sleep", bad)
                 continue
-            ok.append(c)
+            ok.append(i)
+        at["passed"] = ok
+        ok = [cands[i] for i in ok]
         if ok:
-            chosen, score = await pick(jev, about, log_lines, mine, ok, recalled_text, sections.get("今", ""))
+            chosen, score = await pick(jev, about, log_lines, mine, ok, recalled_text, sections.get("今", ""), at["pick"])
             if chosen is None and score is None:
-                chosen, score = await pick(jev, about, log_lines, mine, ok, recalled_text, sections.get("今", ""))   # Jev の一時失敗かもしれないので、同じ案でもう1回だけ
+                chosen, score = await pick(jev, about, log_lines, mine, ok, recalled_text, sections.get("今", ""),
+                                           at["pick"])   # Jev の一時失敗かもしれないので、同じ案でもう1回だけ
+            at["chosen"], at["score"] = chosen, score
             if chosen:
                 log.info("案%d件（検査を通った%d件）から選んだ（立場 %s）: %s", len(cands), len(ok),
                          None if score is None else round(score, 2), " ｜ ".join(chosen))
@@ -243,6 +274,7 @@ async def write(llm, jev, vault, about, sections, kind, guards, reactions=(), mi
         else:
             log.info("どの案も検査を通らない（%d件）。書き直す", len(cands))
         if attempt == 0:
+            tr["rewrote"] = True
             messages = messages + [{"role": "assistant", "content": text or "{}"},
                                    {"role": "user", "content": "【書き直し】どの案も使えなかった。同じ形で、別の案を書き直す"}]
     return None

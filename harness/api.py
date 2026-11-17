@@ -68,7 +68,7 @@ class LLM:
         self.key, self.models, self.timeout = key, list(models), timeout
 
     async def chat(self, messages, temperature=1.0):
-        """JSON で返させる。前のモデルが失敗したら次のモデル。全滅なら None。"""
+        """JSON で返させる。前のモデルが失敗したら次のモデル。(本文, 答えたモデル名)。全滅なら (None, None)。"""
         payload = {"messages": messages, "temperature": temperature, "reasoning": {"enabled": False},
                    "response_format": {"type": "json_object"}}
         for model in self.models:
@@ -76,10 +76,10 @@ class LLM:
                 res = await asyncio.to_thread(_post, OR_URL, {**payload, "model": model}, self.key, self.timeout)
                 text = res["choices"][0]["message"]["content"]
                 if text and text.strip():
-                    return text.strip().removeprefix("```json").removesuffix("```").strip()
+                    return text.strip().removeprefix("```json").removesuffix("```").strip(), model
             except (urllib.error.URLError, TimeoutError, ValueError, OSError, KeyError, IndexError) as e:
                 log.warning("%s 失敗: %s", model, e)
-        return None
+        return None, None
 
 
 def loads(text):

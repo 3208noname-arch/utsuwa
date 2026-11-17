@@ -50,11 +50,17 @@ class Logs:
         self.vault.append_line(f"03 Logs/ratings/{rec['at'][:7]}.jsonl", json.dumps(rec, ensure_ascii=False))
 
     def said(self, rec):
-        """返事を出した時の記録。発言の ID が無い影の返事も、本文で評価と突き合わせる。"""
+        """送れた返事の記録（軽いまま）。id は prompts の trace と同じ。message_ids は送れた Discord の発言 ID。
+        影の返事は発言の ID が無いので、本文で評価と突き合わせる。"""
         self.vault.append_line(f"03 Logs/said/{rec['at'][:7]}.jsonl", json.dumps(rec, ensure_ascii=False))
 
-    def find_said(self, text, at):
-        """評価された本文に当たる、いちばん新しい返事の記録。"""
+    def prompt(self, rec):
+        """返事の全文の trace（渡した節、記憶、書いた過程、通す・黙るの判断）と、黙った判断。said と同じ id で引く。"""
+        self.vault.append_line(f"03 Logs/prompts/{rec['at'][:7]}.jsonl", json.dumps(rec, ensure_ascii=False))
+
+    def find_said(self, text, at, message_id=None):
+        """評価された発言に当たる、いちばん新しい返事の記録。Discord の発言 ID で引き、
+        ID を持たない行（古い行と影の返事）だけ、本文の部分一致で引く。"""
         day = datetime.fromisoformat(at)
         rows = []
         for d in (day.replace(day=1) - timedelta(days=1), day):
@@ -62,7 +68,12 @@ class Logs:
             if os.path.exists(p):
                 with open(p, encoding="utf-8") as f:
                     rows += [json.loads(x) for x in f if x.strip()]
-        return next((r for r in reversed(rows) if any(x and x in text for x in r["text"].split("\n"))), None)
+        if message_id is not None:
+            hit = next((r for r in reversed(rows) if str(message_id) in (r.get("message_ids") or [])), None)
+            if hit:
+                return hit
+        return next((r for r in reversed(rows) if not r.get("message_ids")
+                     and any(x and x in text for x in r["text"].split("\n"))), None)
 
     def around(self, channel, message_id, at, before=6, after=6):
         """ある発言の前後の会話（評価の時に使う）。その日と前の日の原本から探す。"""

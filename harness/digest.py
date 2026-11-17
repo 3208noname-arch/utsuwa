@@ -90,7 +90,7 @@ def material(agent, day):
 async def propose(agent, day):
     """更新案。{"meta","body"} か None。保存はしない。"""
     user = material(agent, day)
-    text = await agent.llm.chat([{"role": "system", "content": agent.vault.text("Agents/RECORDER.md")},
+    text, _ = await agent.llm.chat([{"role": "system", "content": agent.vault.text("Agents/RECORDER.md")},
                                  {"role": "user", "content": user}], temperature=0)
     d, why = check(loads(text))
     if why:

@@ -131,7 +131,7 @@ async def diary_draft(agent, day, events, learned, mine):
     user = ("【種類】日記\n【その日の出来事】\n" + ("\n".join(f"- {e}" for e in events) or "（無し）") +
             "\n【その日に覚えたこと】\n" + ("\n".join(f"- {x}" for x in learned) or "（無し）") +
             "\n【自分が言ったこと】\n" + ("\n".join(f"- {x}" for x in mine) or "（無し）"))
-    text = await agent.llm.chat([{"role": "system", "content": agent.vault.text("Agents/RECORDER.md")},
+    text, _ = await agent.llm.chat([{"role": "system", "content": agent.vault.text("Agents/RECORDER.md")},
                                  {"role": "user", "content": user}], temperature=0.7)
     return str(loads(text).get("body") or "").strip() or None
 

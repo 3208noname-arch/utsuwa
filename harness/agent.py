@@ -8,6 +8,9 @@ Discord には依存しない。発言は dict で受け取り、送るのは se
   **書くのは、気付くまでの間を待つ間に済ませる。**その間に会話が進んだら、Jev が「通す、書き直す、黙る」を選ぶ
 記録の流れ
   発言の後の6件か10分を待ち、前後と一緒に Jev 1回で読む（記録するか、人格の部品の問い）→ 記録用 LLM → 保存
+返事の記録
+  書き始めた時点の節・記憶・内部の値と、書いた過程、通す・黙るの判断を1件の trace にまとめ、Intent.extra で送るまで運ぶ
+  送れた返事は `03 Logs/said/` に軽く、trace の全文は `03 Logs/prompts/` に同じ id で書く。黙った判断も prompts に書く
 """
 import asyncio
 import importlib
@@ -15,6 +18,7 @@ import json
 import logging
 import os
 import random
+import uuid
 from collections import deque
 from datetime import datetime, timedelta
 
@@ -217,6 +221,7 @@ class Agent:
         addressed = bool(target.get("mentions_me") or target.get("to_me"))
         if not self._budget_ok(target["author_id"], t):
             log.info("上限に達したので黙る")
+            self.judge_log(ch, target, "budget")
             return
         pres = self.persona.presence(t)
         recent = list(self.conv(ch).recent)
@@ -239,6 +244,9 @@ class Agent:
                                                                   random.random())
         log.info("判断: 宛先=%s 関心=%s シェア=%.2f 人数=%d 様子=%s → %s", addressed, ans.get("interest"), share, humans,
                  pres.state, kind)
+        if kind in ("defer", "none", None):
+            self.judge_log(ch, target, kind or "none", answers=ans, addressed=addressed, share=round(share, 3),
+                           humans=humans, presence=pres.state)
         if kind == "defer":
             d = self.h.data.setdefault("deferred", [])
             d.append({"channel": ch, "target": target, "at": t.isoformat(), "was": pres.state})
@@ -299,26 +307,56 @@ class Agent:
             out = await p.result()
             if out is not None and self.now() - t0 > PENDING_TTL:
                 log.info("書くのに時間がかかりすぎたので捨てる")
-                out = None
+                out, p.outcome = None, "ttl"
         finally:
             self.pending.pop(ch, None)
         if out is None:
+            self.write_trace(it.extra["trace"], p.outcome or "write_failed")
             return
         await self.deliver(it, out, pres)
 
-    async def deliver(self, it, out, pres):
-        t, ch = self.now(), it.channel
-        mode = self.channel_mode(ch)
+    # --- 返事の記録 ---------------------------------------------------------------------
+    @staticmethod
+    def new_trace(it):
+        """1回の返事の trace。said と prompts を同じ id でつなぐ。"""
+        return {"id": uuid.uuid4().hex, "event": "reply", "channel": it.channel, "source": it.source, "kind": it.kind,
+                "target_id": it.target and str(it.target["id"]), "queued_at": it.at.isoformat(timespec="seconds"),
+                "drafts": [], "rechecks": []}
+
+    def write_trace(self, trace, outcome, **extra):
+        """trace の全文を prompts に1行。outcome は sent／shadow／send_failed／write_failed／recheck_silent／ttl。"""
+        self.logs.prompt({"at": self.now().isoformat(timespec="seconds"), **trace, "outcome": outcome, **extra})
+
+    def judge_log(self, ch, target, decision, **kw):
+        """①判断で黙った（後回しにした）時の、Jev の答えと理由を prompts に1行。"""
+        self.logs.prompt({"at": self.now().isoformat(timespec="seconds"), "id": uuid.uuid4().hex, "event": "judge",
+                          "channel": ch, "target_id": str(target["id"]), "decision": decision, **kw})
+
+    def _answered(self, it, t):
         if it.target:
             self.outbox.mark(it.target["id"])
             self.h.data["answered"] = self.outbox.answered
             self._count(it.target["author_id"], t)
         self.h.touch()
-        self.logs.said({"at": t.isoformat(timespec="seconds"), "channel": ch, "source": it.source,
-                        "target_id": it.target and str(it.target["id"]),
-                        "text": out if isinstance(out, str) else "\n".join(out), "version": __version__,
-                        "state": self.persona.snapshot(t, it.target and it.target.get("author_id"))})
+
+    def _said(self, it, trace, text, **extra):
+        """送れた返事を said に書く。state は書き始めた時点の値（trace の最後の下書き）。"""
+        t = self.now()
+        d = trace["drafts"][-1] if trace["drafts"] else {}
+        state = d.get("state") or self.persona.snapshot(t, it.target and it.target.get("author_id"))
+        self.logs.said({"id": trace["id"], "at": t.isoformat(timespec="seconds"), "started_at": d.get("at"),
+                        "channel": it.channel, "source": it.source, "target_id": it.target and str(it.target["id"]),
+                        "text": text, "version": __version__, "state": state, **extra})
+
+    async def deliver(self, it, out, pres):
+        t, ch = self.now(), it.channel
+        mode = self.channel_mode(ch)
+        trace = it.extra.setdefault("trace", self.new_trace(it))
+        text = out if isinstance(out, str) else "\n".join(out)
         if mode == "shadow":
+            self._answered(it, t)
+            self._said(it, trace, text, shadow=True)
+            self.write_trace(trace, "shadow", text=text)
             where = self.config.get("compare_channel")
             head = f"（{it.target['author']}「{it.target['text'][:40]}」に）" if it.target else f"（{it.source}）"
             body = f"（リアクション {out}）" if isinstance(out, str) else "\n".join(out)
@@ -328,13 +366,34 @@ class Agent:
                 await self.sender.send(str(where), [head + body], reply_to=None, typing=[0])
             log.info("影: %s%s", head, body)
             return
+        # said には送れた分だけ書く。送れなかったら数えず、返事済みにもしない
+        err = None
+        try:
+            if isinstance(out, str):
+                sent = await self.sender.react(ch, it.target["id"], out)
+            else:
+                moved = it.target and self.conv(ch).last_id() != it.target["id"]
+                reply_to = it.target["id"] if it.target and (moved or it.addressed) else None
+                sent = await self.sender.send(ch, out, reply_to=reply_to,
+                                              typing=[self.persona.typing_sec(x, pres.device) for x in out])
+        except Exception as e:
+            log.exception("送れなかった")
+            sent, err = None, repr(e)
+        if not sent:
+            log.warning("送れなかったので said に書かない（%s）", ch)
+            self.write_trace(trace, "send_failed", text=text, error=err)
+            return
+        self._answered(it, self.now())
         if isinstance(out, str):
-            await self.sender.react(ch, it.target["id"], out)
+            self._said(it, trace, text, reacted_to=str(sent))
+            self.write_trace(trace, "sent", text=text, reacted_to=str(sent))
             self.persona.on_delivered(it, out)
             return
-        moved = it.target and self.conv(ch).last_id() != it.target["id"]
-        reply_to = it.target["id"] if it.target and (moved or it.addressed) else None
-        await self.sender.send(ch, out, reply_to=reply_to, typing=[self.persona.typing_sec(x, pres.device) for x in out])
+        ids = [str(x) for x in sent]
+        if len(ids) < len(out):        # 途中で送れなくなった。送れた分だけを残す
+            text = "\n".join(out[:len(ids)])
+        self._said(it, trace, text, message_ids=ids)
+        self.write_trace(trace, "sent", text=text, message_ids=ids)
         self.persona.on_delivered(it, out)
         qs = self.persona.sent_questions(out)
         if qs:
@@ -377,7 +436,10 @@ class Agent:
 
     async def compose(self, it):
         t = self.now()
+        # 内部の値は、送った時点ではなく書き始めた時点で取る（気付くまでの間の分、送るのは後になる）
+        state = self.persona.snapshot(t, it.target and it.target.get("author_id"))
         s, lines = self.sections(it, t)
+        picked = []
         kinds = self.config.get("kinds") or {}
         if it.source == "reply" and it.kind == "reaction":
             # 絵文字だけの反応には重い想起（Jev の種類・行の選択）をしない。人物・近況・約束の固定枠は上で付いている
@@ -396,9 +458,17 @@ class Agent:
         if it.note:
             s["補足"] = it.note
         log.info("節の字数: %s／記憶 %s", {k: len(v) for k, v in s.items()}, stats)
+        draft = {"at": t.isoformat(timespec="seconds"), "state": state, "sections": dict(s),
+                 "memory": {"picked": [{"rel": r.rel, "kind": r.kind, "p": round(r.p, 3)} for r in picked],
+                            "stats": stats, "faded": [r.rel for r in faded]},
+                 "write": {}}
+        trace = it.extra.get("trace")
+        if trace is not None:
+            trace["drafts"].append(draft)
         return await writer.write(self.llm, self.jev, self.vault, self.about, s, it.kind, self.persona.guards(it.target),
                                   self.config.get("reactions") or (), mine, lines, mem,
-                                  drop_stray=self.config.get("number_check") == "drop", faded=faded)
+                                  drop_stray=self.config.get("number_check") == "drop", faded=faded,
+                                  trace=draft["write"])
 
     async def recheck(self, it, start_lines, new, draft, allow_rewrite=True):
         """書いている間に会話が進んだ。通す／書き直す／黙る を Jev が選ぶ。Jev が失敗したら黙る。"""
@@ -410,6 +480,11 @@ class Agent:
         a = await self.jev.ask(state, {"v": choice(f"{self.about}が書いた返事の案を、新しい発言の後に送るか。", crit)})
         v = a.get("v", (None,))[0]
         log.info("書いている間に会話が進んだ（%d件）→ %s", len(new), v or "Jev失敗のため黙る")
+        trace = it.extra.get("trace")
+        if trace is not None:
+            trace["rechecks"].append({"at": t.isoformat(timespec="seconds"), "new": [str(m["id"]) for m in new],
+                                      "verdict": v, "probs": a.get("v", (None, {}))[1],
+                                      "allow_rewrite": allow_rewrite})
         return v
 
     # --- 時間で進むもの ---------------------------------------------------------------
@@ -554,7 +629,7 @@ class Agent:
         compared = channel == str(self.config.get("compare_channel"))
         if compared and text.startswith("-# ") and "\n" in text:    # 比べる用の投稿は、本番の Bot の行を除く
             text = text.split("\n", 1)[1]
-        said = self.logs.find_said(text, at) if rec.get("is_me") else None
+        said = self.logs.find_said(text, at, rec.get("message_id")) if rec.get("is_me") else None
         if said and compared and said.get("target_id"):            # 前後の会話は、元のチャンネルから引く
             channel, message_id, at = said["channel"], said["target_id"], said["at"]
         around = self.logs.around(channel, message_id, at)
@@ -584,10 +659,12 @@ class Pending:
         conv = agent.conv(it.channel)
         self.start_id = conv.last_id()
         it.extra["upto"] = self.start_id
+        it.extra["trace"] = agent.new_trace(it)     # compose・recheck が足し、deliver か handle が書く
         self.start_lines = "\n".join(writer.line(m, agent.now()) for m in list(conv.recent))
         self.draft_task = None
         self.check_task, self.checked_n = None, 0
         self.rewrote = False
+        self.outcome = None            # 黙った時の理由（write_failed／recheck_silent／ttl）
 
     def start(self):
         self.draft_task = asyncio.ensure_future(self.agent.compose(self.it))
@@ -610,6 +687,8 @@ class Pending:
 
     async def result(self):
         out = await self.draft_task
+        if out is None:
+            self.outcome = "write_failed"
         while out is not None:
             new = self._new()
             if not new:
@@ -625,6 +704,7 @@ class Pending:
             if v == "通す":
                 return out
             if v != "書き直す" or self.rewrote:
+                self.outcome = "recheck_silent"
                 return None
             self.rewrote = True        # 書き直しは1回まで。その後は通すか黙るかだけ
             conv = self.agent.conv(self.it.channel)
@@ -634,4 +714,6 @@ class Pending:
             self.check_task, self.checked_n = None, 0
             self.draft_task = asyncio.ensure_future(self.agent.compose(self.it))
             out = await self.draft_task
+            if out is None:
+                self.outcome = "write_failed"
         return None

@@ -120,9 +120,12 @@ class Gateway(discord.Client):
 
     # --- 本体から呼ばれる「送る」 ------------------------------------------------------
     async def send(self, channel, texts, reply_to=None, typing=()):
+        """送れた Discord の発言 ID のリストを返す。チャンネルが無ければ None、途中で失敗したら送れた分だけ。"""
         ch = self.get_channel(int(channel))
         if ch is None:
-            return
+            log.warning("送り先のチャンネルが見つからない: %s", channel)
+            return None
+        ids = []
         target = None
         if reply_to:
             try:
@@ -134,16 +137,30 @@ class Gateway(discord.Client):
             if secs:
                 async with ch.typing():
                     await asyncio.sleep(secs)
-            if i == 0 and target:
-                await target.reply(text, mention_author=False)
-            else:
-                await ch.send(text)
+            try:
+                if i == 0 and target:
+                    sent = await target.reply(text, mention_author=False)
+                else:
+                    sent = await ch.send(text)
+            except discord.HTTPException as e:
+                log.error("送れなかった（%d通目）: %s", i + 1, e)
+                break
+            ids.append(str(sent.id))
+        return ids
 
     async def react(self, channel, message_id, emoji):
+        """付けられたら、付けた発言の ID を返す。付けられなければ None。"""
         ch = self.get_channel(int(channel))
-        if ch:
+        if ch is None:
+            log.warning("リアクション先のチャンネルが見つからない: %s", channel)
+            return None
+        try:
             msg = await ch.fetch_message(int(message_id))
             await msg.add_reaction(emoji)
+        except discord.HTTPException as e:
+            log.error("リアクションを付けられなかった: %s", e)
+            return None
+        return str(message_id)
 
     async def notify(self, text):
         where = self.agent.config.get("notify_channel")

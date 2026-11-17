@@ -53,7 +53,7 @@ class Recorder:
         """記録用 LLM に書かせて保存する。rel か None。"""
         a = self.agent
         user = (f"【種類】{kind}\n【会話】\n{context}\n【発言】{said}")
-        text = await a.llm.chat([{"role": "system", "content": a.vault.text("Agents/RECORDER.md")},
+        text, _ = await a.llm.chat([{"role": "system", "content": a.vault.text("Agents/RECORDER.md")},
                                  {"role": "user", "content": user}], temperature=0)
         d = loads(text)
         name = d.get("name")
