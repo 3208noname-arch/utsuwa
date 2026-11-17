@@ -61,6 +61,13 @@ class MigrateTest(unittest.TestCase):
         self.assertEqual(v.text("00 Diary/2026-11-06.md"), "ゆず胡椒に会った。")      # その日のログに居ない
         self.assertIn("結びつかない", why[("00 Diary/2026-11-06.md", "ゆず胡椒")])
 
+    def test_person_flag_replaces_a_checked_spot(self):
+        v = setup()
+        out = io.StringIO()
+        migrate_names.run(v.root, ["ゆず胡椒"], write=True, out=out, persons=["00 Diary/2026-11-06.md:1:ゆず胡椒"])
+        self.assertEqual(v.text("00 Diary/2026-11-06.md"), f"[[{A}|ゆず胡椒]]に会った。")
+        self.assertIn("鍋にゆず胡椒を入れた", v.text("00 Diary/2026-11-05.md"))      # 指定していない所はそのまま
+
     def test_frontmatter(self):
         v = setup()
         run(v, write=True)

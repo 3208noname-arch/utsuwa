@@ -1,6 +1,6 @@
 """既存のノートの人名を `[[<id>|表示名]]` の印に置き換える移行。既定は dry-run（何も書かない）。
 
-    python -m harness.migrate_names "<Vault>/12 AIたち/<名前>" [--word ゆず胡椒] [--diff] [--write]
+    python -m harness.migrate_names "<Vault>/12 AIたち/<名前>" [--word ゆず胡椒] [--person "00 Diary/2026-11-11.md:3:ゆず胡椒"] [--diff] [--write]
 
 - 名前と ID の対応は `03 Logs/chat/*.jsonl` の author / author_id から作る（自分と Bot は除く）。
   人物ページの INDEX に ID のある行の表示名も足す。同じ名前に ID が2つ以上あれば、その名前は置き換えない（曖昧）
@@ -8,7 +8,8 @@
 - 本文: 知っている名前を印にする。ただし「普通の語でもある名前」（`--word` で渡した語と、ひらがな3字以下の名前）は、
   そのノートがその人に結びつき（教わった人にいる、日記ならその日のログで発言しているか返事を受けている）、
   名前の後に人を指す言い方（から・に・が・と・は…）が続き、同じ文に食べ物の手がかり（鍋・かけ・味…）が無い時だけ置き換える。
-  それ以外は置き換えずに曖昧の一覧に出す
+  それ以外は置き換えずに曖昧の一覧に出す。人が確かめて人だと決めた所は `--person "<ファイル>:<行>:<名前>"` で置き換える
+  （行は一覧に出る行番号。本文の何行目か。同じ名前に ID が2つ以上ある所は、これでも置き換えない）
 - フロントマター: 教わった人を印に、関係する人（ID）を足す、思い出す言葉から人名を落とす
   （普通の語でもある名前は、ノートがその人に結びつく時だけ落とし、それ以外は一覧に出す）
 - 05 人物/<表示名>.md（INDEX に ID のある行）は 05 人物/<id>.md に移し、フロントマターに id・表示名・ユーザー名・aliases を足す
@@ -68,6 +69,7 @@ def wordlike(name, words):
 class Plan:
     def __init__(self):
         self.replaced, self.ambiguous, self.meta, self.moves, self.writes = [], [], [], [], {}
+        self.persons = set()       # 人が人だと決めた所 {(rel, 行, 名前)}
 
     def amb(self, rel, line, name, why, ctx):
         self.ambiguous.append({"file": rel, "line": line, "name": name, "why": why, "context": ctx})
@@ -104,7 +106,7 @@ def mark_body(rel, body, by_name, tied, words, plan):
             plan.amb(rel, line, n, f"同じ名前の ID が{len(ids)}つ", ctx)
             continue
         uid = next(iter(ids))
-        if wordlike(n, words):
+        if wordlike(n, words) and (rel, line, n) not in plan.persons:
             if uid not in tied:
                 plan.amb(rel, line, n, "普通の語でもある名前で、ノートがこの人に結びつかない", ctx)
                 continue
@@ -227,12 +229,19 @@ def plan_pages(v, latest, user, plan):
     return out
 
 
-def run(root, words=(), write=False, diff=False, out=sys.stdout):
+def parse_person(s):
+    """`<ファイル>:<行>:<名前>` を (rel, 行, 名前) に。"""
+    rel, line, name = str(s).rsplit(":", 2)
+    return rel.replace("\\", "/"), int(line), name
+
+
+def run(root, words=(), write=False, diff=False, out=sys.stdout, persons=()):
     v = Vault(root)
     by_name, latest, user, days = directory(root)
     words = set(words)
     all_names = {n for n in by_name if n} | set(user.values())
     plan = Plan()
+    plan.persons = {parse_person(x) for x in persons}
     moved = plan_pages(v, latest, user, plan)
     move_to = {a: (b, text) for a, b, text in moved}
     for folder in FOLDERS:
@@ -321,11 +330,12 @@ def main(argv=None):
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("root", help="エージェントのフォルダ（Vault の 12 AIたち/<名前>）")
     ap.add_argument("--word", action="append", default=[], help="普通の語でもある名前（何度でも）")
+    ap.add_argument("--person", action="append", default=[], help="人として置き換える所 <ファイル>:<行>:<名前>（何度でも）")
     ap.add_argument("--diff", action="store_true", help="差分も出す")
     ap.add_argument("--write", action="store_true", help="実際に書き換える（既定は dry-run）")
     a = ap.parse_args(argv)
     sys.stdout.reconfigure(encoding="utf-8")
-    run(a.root, a.word, a.write, a.diff)
+    run(a.root, a.word, a.write, a.diff, persons=a.person)
 
 
 if __name__ == "__main__":
