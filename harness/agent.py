@@ -24,7 +24,7 @@ from datetime import datetime, timedelta
 
 import yaml
 
-from harness import __version__, context, digest, fade, night, people, promises, writer
+from harness import __version__, context, digest, fade, night, people, promises, who, writer
 from harness.api import choice, noul
 from harness.outbox import Intent, Outbox
 from harness.persona import Persona
@@ -81,6 +81,7 @@ class Agent:
         self.reading = deque()
         self.pending = {}              # channel -> 書いている最中の返事（会話が進んだかの確かめ用）
         self.window_task = None
+        self.whois = who.Names(vault)  # {author_id: 今の表示名} の台帳（人名の印 [[id|名前]] を今の名前にする）
         self.recorder = Recorder(self)
         self.compare = Compare(self)
         self.persona = (persona_cls or load_persona(self.config.get("persona")))(self)
@@ -107,7 +108,11 @@ class Agent:
 
     def conv(self, channel):
         if channel not in self.convs:
-            self.convs[channel] = Conversation(self.logs.recent(channel, 40, self.now()))
+            rows = self.logs.recent(channel, 40, self.now())
+            for m in rows:
+                if not m.get("me"):
+                    self.whois.saw(m.get("author_id"), m.get("author"))
+            self.convs[channel] = Conversation(rows)
         return self.convs[channel]
 
     @property
@@ -129,6 +134,8 @@ class Agent:
         m.setdefault("mentions_me", bool(names and names.search(m.get("text", ""))))
         conv = self.conv(ch)
         conv.add(m)
+        if not m.get("me"):
+            self.whois.saw(m.get("author_id"), m.get("author"))
         self.logs.chat(m)
         for it in self.reading:
             if it["channel"] == ch and it["message"]["id"] != m["id"]:
@@ -431,7 +438,8 @@ class Agent:
         who = people.recall(self.vault, it.target["author"], it.target.get("author_id")) if it.target else None
         if who:      # 固定枠。Jev の選択を介さず、返信先の1人分だけ渡す
             s[people.SECTION] = who
-        mine = promises.recall(self, it.target["author"] if it.target else None)
+        mine = promises.recall(self, it.target["author"] if it.target else None,
+                               it.target.get("author_id") if it.target else None)
         if mine:     # 固定枠。未完了の約束・宣言を最大3件（返信先に向けたものを先に）
             s[promises.SECTION] = mine
         s.update(self.persona.inner(t, it.target))
@@ -442,6 +450,7 @@ class Agent:
         # 内部の値は、送った時点ではなく書き始めた時点で取る（気付くまでの間の分、送るのは後になる）
         state = self.persona.snapshot(t, it.target and it.target.get("author_id"))
         s, lines = self.sections(it, t)
+        names = self.whois.current()
         picked = []
         kinds = self.config.get("kinds") or {}
         if it.source == "reply" and it.kind == "reaction":
@@ -450,11 +459,15 @@ class Agent:
         else:
             mem, picked, stats = await context.select(self.jev, self.vault, lines, self.about, t.date(),
                                                  {k: v.get("about", "") for k, v in kinds.items()},
-                                                 {k: v.get("when", "") for k, v in kinds.items()})
+                                                 {k: v.get("when", "") for k, v in kinds.items()},
+                                                 it.target and it.target.get("author_id"), names)
             # 薄れ層（recall.mode が human の時だけ働く。exact ならそのまま）。固定枠は s に先に入っていて、ここは通らない
             mem, faded, fstats = fade.apply(mem, picked, self.config, t.date())
             if fstats:
                 stats = {**stats, "fade": fstats}
+        # 人名の印 [[id|名前]] は会話用 LLM に見せない。印を外し、今の名前にする（古い名前で呼ばないように）
+        mem = {k: who.plain(v, names) for k, v in mem.items()}
+        s = {k: who.plain(v, names) for k, v in s.items()}
         s.update(mem)
         mine = my_lines(self.convs.values(), t)
         s["あなたが最近言ったこと"] = "\n".join(mine) or "（無し）"
@@ -645,13 +658,21 @@ class Agent:
 
     # --- 日記の材料 ----------------------------------------------------------------------
     def day_material(self, day):
+        """日記の材料。自分の発言のうち誰かへの返事には「（[[id|名前]]への返事）」を添える（人名の印はコードが付ける）。"""
         events = self.h.data.get("events", {}).get(day.isoformat(), [])
         learned = [r.body for r in context.lesson_rows(self.vault) if r.date == day.isoformat()]
         mine = []
         p = self.vault.path(f"03 Logs/chat/{day.isoformat()}.jsonl")
         if os.path.exists(p):
             with open(p, encoding="utf-8") as f:
-                mine = [json.loads(x)["text"] for x in f if x.strip() and json.loads(x).get("me")]
+                for x in f:
+                    if not x.strip():
+                        continue
+                    m = json.loads(x)
+                    if not m.get("me"):
+                        continue
+                    to = who.link(m.get("target_id"), m["target_author"]) if m.get("target_author") else ""
+                    mine.append(f"（{to}への返事）{m['text']}" if to else m["text"])
         return events, learned, mine[-30:]
 
 

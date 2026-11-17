@@ -23,7 +23,7 @@ from datetime import datetime, timedelta
 from itertools import combinations
 
 from harness.api import loads, noul
-from harness import digest, people, promises
+from harness import digest, people, promises, who
 from harness.context import lesson_rows
 from harness.saver import norm
 
@@ -128,12 +128,16 @@ async def diary_draft(agent, day, events, learned, mine):
     rel = f"00 Diary/{day.isoformat()}.md"
     if agent.vault.exists(rel):
         return None
-    user = ("【種類】日記\n【その日の出来事】\n" + ("\n".join(f"- {e}" for e in events) or "（無し）") +
-            "\n【その日に覚えたこと】\n" + ("\n".join(f"- {x}" for x in learned) or "（無し）") +
-            "\n【自分が言ったこと】\n" + ("\n".join(f"- {x}" for x in mine) or "（無し）"))
+    names = people.names_of(agent)
+    user = who.rename("【種類】日記\n【その日の出来事】\n" + ("\n".join(f"- {e}" for e in events) or "（無し）") +
+                      "\n【その日に覚えたこと】\n" + ("\n".join(f"- {x}" for x in learned) or "（無し）") +
+                      "\n【自分が言ったこと】\n" + ("\n".join(f"- {x}" for x in mine) or "（無し）"), names)
     text, _ = await agent.llm.chat([{"role": "system", "content": agent.vault.text("Agents/RECORDER.md")},
                                  {"role": "user", "content": user}], temperature=0.7)
-    return str(loads(text).get("body") or "").strip() or None
+    body, dropped = who.check(str(loads(text).get("body") or "").strip(), who.ids(user) | set(names))
+    if dropped:
+        log.info("日記: 知らない ID の印を外した %s", dropped)
+    return body or None
 
 
 def diary_save(agent, day, body):

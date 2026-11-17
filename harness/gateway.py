@@ -29,7 +29,7 @@ class CommentModal(discord.ui.Modal, title="ひと言（空欄でもOK）"):
         name = f"{self.rec['label']}（{self.rec['detail']}）" if self.rec.get("detail") else self.rec["label"]
         await interaction.response.send_message(f"「{name}」で記録した。ありがとう", ephemeral=True)
         await self.agent.rate({**self.rec, "comment": str(self.comment.value or "").strip(),
-                               "rater": interaction.user.display_name,
+                               "rater": interaction.user.display_name, "rater_id": str(interaction.user.id),
                                "at": discord.utils.utcnow().astimezone().replace(tzinfo=None)
                                .isoformat(timespec="seconds")})
 
@@ -86,6 +86,7 @@ class Gateway(discord.Client):
         return {"id": str(m.id), "at": m.created_at.astimezone().replace(tzinfo=None).isoformat(timespec="seconds"),
                 "target_author": to.display_name if to else None, "target_id": str(to.id) if to else None,
                 "channel": str(m.channel.id), "author": m.author.display_name, "author_id": str(m.author.id),
+                "username": m.author.name,
                 "bot": m.author.bot, "me": m.author == self.user, "text": self.describe(m), "url": m.jump_url,
                 "reply_to": str(m.reference.message_id) if m.reference else None,
                 "to_me": bool(isinstance(ref, discord.Message) and ref.author == self.user) or self.user in m.mentions,

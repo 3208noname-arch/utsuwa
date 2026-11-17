@@ -145,15 +145,18 @@ class NightTest(unittest.TestCase):
     def test_dry_run_writes_nothing(self):
         before = self.a.vault.text("05 人物/ミナ.md")
         done = asyncio.run(people.update(self.a, DAY, write_=False))
-        self.assertEqual(done, [("05 人物/ミナ.md", False)])
+        self.assertEqual(done, [("05 人物/u-ミナ.md", False)])
         self.assertEqual(self.a.vault.text("05 人物/ミナ.md"), before)
+        self.assertFalse(self.a.vault.exists("05 人物/u-ミナ.md"))
         self.assertEqual(people.find(self.a.vault, "ミナ").updated, "2026-11-11")
 
     def test_write_updates_page_and_index(self):
         done = asyncio.run(people.update(self.a, DAY, write_=True))
-        self.assertEqual(done, [("05 人物/ミナ.md", True)])
-        n = self.a.vault.note("05 人物/ミナ.md")
+        self.assertEqual(done, [("05 人物/u-ミナ.md", True)])         # ページ名は ID
+        self.assertFalse(self.a.vault.exists("05 人物/ミナ.md"))        # 前の作りのページは移した
+        n = self.a.vault.note("05 人物/u-ミナ.md")
         self.assertEqual(n.meta["種類"], "人物")
+        self.assertEqual((n.meta["id"], n.meta["表示名"], n.meta["aliases"]), ("u-ミナ", "ミナ", []))
         self.assertEqual(str(n.meta["date"]), "2026-11-10")          # 作った日は保つ
         sec = people.parse_page(n.body)
         self.assertEqual(sec["約束・宣言"], "- 今度ラーメンを奢る")
@@ -168,7 +171,7 @@ class NightTest(unittest.TestCase):
         self.assertEqual(len(self.llm.calls), 1)                      # ケイは発言が1つなので更新しない
         sent = self.llm.calls[0][1]["content"]
         self.assertNotIn("俺の発言は材料にしない", sent)
-        self.assertIn("【相手】ミナ", sent)
+        self.assertIn("【相手】[[u-ミナ|ミナ]]", sent)                  # 相手は印で渡す
         self.assertIn("同じ学部の友人", sent)                          # 今のページを渡す
 
     def test_bad_answers_are_not_saved(self):
@@ -185,14 +188,14 @@ class NightTest(unittest.TestCase):
         from harness import night
         before = self.a.vault.text("05 人物/ミナ.md")
         out = asyncio.run(night.run(self.a, datetime(2026, 11, 13, 4, 0)))       # 4時は前の日の整理（config は write: false）
-        self.assertEqual(out["people"], [("05 人物/ミナ.md", False)])
+        self.assertEqual(out["people"], [("05 人物/u-ミナ.md", False)])
         self.assertEqual(self.a.vault.text("05 人物/ミナ.md"), before)
 
     def test_new_person_creates_page_and_index_row(self):
         a = agent(FakeLLM(lambda m: json.dumps(ANSWER)))
         with_chat(a)
         asyncio.run(people.update(a, DAY, write_=True))
-        self.assertTrue(a.vault.exists("05 人物/ミナ.md"))
+        self.assertTrue(a.vault.exists("05 人物/u-ミナ.md"))
         self.assertEqual([e.name for e in people.index(a.vault)], ["ミナ"])
         self.assertIn(people.SECTION, sections(a, "ミナ"))             # 書いた翌日から想起される
 
@@ -270,23 +273,23 @@ class AuthorIdTest(unittest.TestCase):
         a = with_ids(agent(llm))
         says(a, "みーな", "1001")
         done = asyncio.run(people.update(a, DAY, write_=True))
-        self.assertEqual(done, [("05 人物/ミナ.md", True)])              # ページ名は据え置き
-        self.assertEqual(pages(a), ["05 人物/ミナ.md"])
+        self.assertEqual(done, [("05 人物/1001.md", True)])              # ページ名は ID
+        self.assertEqual(pages(a), ["05 人物/1001.md"])                   # 1人1ページのまま
         rows = [e for e in people.index(a.vault) if e.uid == "1001"]
         self.assertEqual(len(rows), 1)
-        self.assertEqual((rows[0].name, rows[0].updated), ("ミナ", "2026-11-12"))
-        self.assertIn("みーな", rows[0].forms)                            # 今の表示名は呼び名に残す
+        self.assertEqual((rows[0].name, rows[0].updated), ("みーな", "2026-11-12"))   # 表示名は今の名前
         self.assertIn("同じ学部の友人", llm.calls[0][1]["content"])       # 前のページを材料に渡している
-        self.assertIn("- みーな", a.vault.text("05 人物/ミナ.md"))
+        meta = a.vault.note("05 人物/1001.md").meta
+        self.assertEqual((meta["表示名"], meta["aliases"]), ("みーな", ["ミナ"]))     # 古い名前は aliases に
 
     def test_same_display_name_two_ids_get_two_pages(self):
         a = with_ids(agent(FakeLLM(lambda m: json.dumps(ANSWER))))
         before = a.vault.text("05 人物/ミナ.md")
         says(a, "ミナ", "2002")
         done = asyncio.run(people.update(a, DAY, write_=True))
-        self.assertEqual(done, [("05 人物/ミナ_2002.md", True)])
+        self.assertEqual(done, [("05 人物/2002.md", True)])
         self.assertEqual(a.vault.text("05 人物/ミナ.md"), before)        # 別人のページを上書きしない
-        self.assertEqual({e.uid: e.name for e in people.index(a.vault) if e.uid}, {"1001": "ミナ", "2002": "ミナ_2002"})
+        self.assertEqual({e.uid: e.name for e in people.index(a.vault) if e.uid}, {"1001": "ミナ", "2002": "ミナ"})
 
     def test_pipe_in_display_name_does_not_break_table(self):
         a = agent(FakeLLM(lambda m: json.dumps(ANSWER)))
@@ -296,7 +299,7 @@ class AuthorIdTest(unittest.TestCase):
         ents = people.index(a.vault)
         self.assertEqual([(e.name, e.uid, e.summary, e.updated) for e in ents],
                          [("ミナ｜眠い", "3003", "古本を貸し借りする友人", "2026-11-12")])
-        self.assertEqual(pages(a), ["05 人物/ミナ｜眠い.md"])
+        self.assertEqual(pages(a), ["05 人物/3003.md"])
         rows = [x for x in a.vault.text("05 人物/INDEX.md").split("\n") if x.startswith("| ミナ")]
         self.assertEqual([x.count("|") for x in rows], [6])
         target = {"id": "9", "author": "ミナ|眠い", "author_id": "3003", "text": "やあ", "channel": "c"}

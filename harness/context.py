@@ -6,12 +6,16 @@
 4. 選ばれた行を、種類に合った形で渡す（コード）。上限で切る
 
 `出どころ`（会話／評価）は行に入れない。会話用 LLM に「評価」という語を見せないため。
+
+人で思い出す: 返信先の author_id が `関係する人`（ID）に入っているノートは、種類の段を通らなくても行の候補に入れる。
+名前の文字列一致では引かない（`思い出す言葉` に人名は入れない）。Jev に見せる表の人名は、印を外した今の名前にする。
 """
 import logging
 import os
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from harness import who
 from harness.api import noul
 
 log = logging.getLogger("utsuwa")
@@ -39,14 +43,15 @@ class Row:
     words: list = field(default_factory=list)
     scene: str = ""
     body: str = ""
+    uids: list = field(default_factory=list)        # 関係する人（ID）
     p: float = field(default=0.0, compare=False)    # 選ぶ時の Jev の行確率（薄れ層が読む。選び方には使わない）
 
-    def line(self):
+    def line(self, names=None):
         s = f"{self.name}｜種類: {self.kind}"
         if self.words:
             s += "｜思い出す言葉: " + "、".join(self.words)
         if self.people:
-            s += "｜教わった人: " + "、".join(self.people)
+            s += "｜教わった人: " + "、".join(who.plain(x, names) for x in self.people)
         if self.scene:
             s += "｜場面: " + self.scene
         return s + f"｜{self.date}"
@@ -67,8 +72,15 @@ def lesson_rows(vault):
             continue
         rows.append(Row(rel, str(m["種類"]), os.path.splitext(os.path.basename(rel))[0], str(m["date"]),
                         _list(m.get("教わった人")), _list(m.get("思い出す言葉")), str(m.get("場面") or ""),
-                        n.body.strip()))
+                        n.body.strip(), related_ids(m)))
     return rows
+
+
+def related_ids(meta):
+    """関係する人の ID。`関係する人` が無い古いノートは、教わった人の印から取る。"""
+    out = [who.uid_of(x) or x for x in _list(meta.get("関係する人"))]
+    out += [who.uid_of(x) for x in _list(meta.get("教わった人"))]
+    return list(dict.fromkeys(x for x in out if x))
 
 
 def diary_rows(vault, today):
@@ -149,10 +161,12 @@ def kind_question(about, k, kinds_about, kinds_when):
                 f"{'（' + '。'.join(desc) + '）' if desc else ''}を思い出す必要があるか。")
 
 
-async def select(jev, vault, convo_text, about, today: date, kinds_about=None, kinds_when=None):
+async def select(jev, vault, convo_text, about, today: date, kinds_about=None, kinds_when=None, uid=None, names=None):
     """今の会話（convo_text）に関係する記憶を選び、(節, 選んだ行, ログ用の数) を返す。
 
     種類の段・行の段とも、会話文全体で聞き、順位方式で通す（定数は上のとおり）。
+    uid（返信先の author_id）が関係する人に入っている行は、種類の段で落ちても行の候補に入れる。
+    names（{id: 今の名前}）は、Jev に見せる表の人名に使う。
     """
     rows = lesson_rows(vault) + diary_rows(vault, today)
     if not rows:
@@ -162,10 +176,11 @@ async def select(jev, vault, convo_text, about, today: date, kinds_about=None, k
     q1 = {f"k{i}": kind_question(about, k, kinds_about, kinds_when) for i, k in enumerate(kinds)}
     a1 = await jev.ask(convo_text, q1)
     wanted = pick_kinds({k: a1.get(f"k{i}", 0) for i, k in enumerate(kinds)})
-    cand = [r for r in rows if r.kind in wanted]
+    uid = str(uid or "")
+    cand = [r for r in rows if r.kind in wanted or (uid and uid in r.uids)]
     if not cand:
         return {}, [], {"rows": len(rows), "kinds": sorted(wanted)}
-    table = "\n".join(f"{i}. {r.line()}" for i, r in enumerate(cand))
+    table = "\n".join(f"{i}. {r.line(names)}" for i, r in enumerate(cand))
     state = f"【会話】\n{convo_text}\n\n【記憶の表】\n{table}"
     q2 = {f"r{i}": noul(f"記憶の表の {i} 番は、{about}がこの会話の最後の発言に返事を書く時に関係するか。")
           for i in range(len(cand))}
@@ -181,4 +196,5 @@ async def select(jev, vault, convo_text, about, today: date, kinds_about=None, k
         chars += len(r.body)
     log.info("文脈: 記憶%d件 → 種類%s → 候補%d件 → %d件（%d字）", len(rows), sorted(wanted), len(cand), len(picked), chars)
     return render(picked), picked, {"rows": len(rows), "kinds": sorted(wanted), "candidates": len(cand),
+                                    "by_person": sum(1 for r in cand if r.kind not in wanted),
                                     "picked": len(picked), "chars": chars}

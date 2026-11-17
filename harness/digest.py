@@ -11,7 +11,7 @@ import logging
 from datetime import date, timedelta
 
 from harness.api import loads
-from harness import people
+from harness import people, who
 from harness.context import lesson_rows
 from harness.vault import join
 
@@ -35,6 +35,7 @@ def _day(v):
 
 
 def render(d):
+    """節を並べた本文。"""
     return "\n\n".join(f"# {h}\n{d[h]}" for h in HEAD)
 
 
@@ -45,7 +46,7 @@ def check(d):
     out = {h: str(d.get(h) or "").strip() for h in HEAD}
     if not any(out.values()):
         return None, "全部の節が空"
-    n = len(render(out).encode("utf-8"))
+    n = len(who.plain(render(out)).encode("utf-8"))      # 人名の印は外した形で数える
     if n > MAX_BYTES:
         return None, f"長すぎる（{n}バイト > {MAX_BYTES}）"
     return out, None
@@ -78,13 +79,13 @@ def material(agent, day):
         for e in agent.h.data.get("events", {}).get(d.isoformat(), [])[-EVENTS_MAX:]:
             events.append(f"- {d.isoformat()} {e}")
     learned = [f"- {r.date} [{r.kind}] {r.body[:120]}" for r in lesson_rows(v) if r.date >= since]
-    met = [f"- {e.name}（{e.summary}）" for e in people.index(v) if e.updated >= since]
+    met = [f"- {who.link(e.uid, e.name)}（{e.summary}）" for e in people.index(v) if e.updated >= since]
     old = v.note(REL)
-    return ("【種類】" + KIND + "\n【今の近況】\n" + (old.body.strip() if old and old.body.strip() else "（まだ無い）") +
+    return who.rename("【種類】" + KIND + "\n【今の近況】\n" + (old.body.strip() if old and old.body.strip() else "（まだ無い）") +
             "\n【直近の日記】\n" + ("\n".join(diary) or "（無し）") +
             "\n【直近の出来事】\n" + ("\n".join(events) or "（無し）") +
             "\n【新しく覚えたこと】\n" + ("\n".join(learned) or "（無し）") +
-            "\n【更新された人物ページ】\n" + ("\n".join(met) or "（無し）"))
+            "\n【更新された人物ページ】\n" + ("\n".join(met) or "（無し）"), people.names_of(agent))
 
 
 async def propose(agent, day):
@@ -96,6 +97,9 @@ async def propose(agent, day):
     if why:
         log.info("近況を保存しない（%s）", why)
         return None
+    d, dropped = who.check_value(d, who.ids(user) | set(people.names_of(agent)))
+    if dropped:
+        log.info("近況: 知らない ID の印を外した %s", dropped)
     return {"meta": {"date": day, "種類": KIND, "status": "active"}, "body": render(d)}
 
 

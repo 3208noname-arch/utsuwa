@@ -1,6 +1,6 @@
 """約束・宣言の台帳 `02 State/約束.json`。自分が言った約束や宣言を状態つきで持ち、次の会話の前提にする。
 
-- 1件は {id, 内容, 相手（表示名か空）, 種類（約束／宣言）, 期限（ISO 日付か空）, 状態（未完了／済み／流れた）, 作られた日}。ファイル全体は件の並び
+- 1件は {id, 内容, 相手（人名の印 `[[id|表示名]]`、ID が分からなければ表示名、いなければ空）, 種類（約束／宣言）, 期限（ISO 日付か空）, 状態（未完了／済み／流れた）, 作られた日}。ファイル全体は件の並び
 - 記録（`add`）は人格が送った返事を Jev が読んだ後に呼ぶ。同じ内容・同じ相手の未完了は足さない
 - 想起（`recall`）はコードで決まる固定枠。未完了の最大 `RECALL_MAX` 件を、返信先と一致する件、期限が近い順（期限なしは後で、新しい順）で節にする
 - 夜の更新（`update`）は night.py から呼ぶ。期限を過ぎた未完了と、期限が無いまま作られてから `UNDATED_DAYS` 日を過ぎた未完了は、
@@ -13,6 +13,7 @@ import logging
 import os
 from datetime import date, timedelta
 
+from harness import who
 from harness.api import noul
 from harness.saver import norm
 
@@ -42,15 +43,21 @@ def _same(a, b):
     return na == nb or (min(len(na), len(nb)) >= 6 and (na in nb or nb in na))
 
 
-def add(st, text, who, kind, today, due=""):
-    """台帳に足す。足した件、重複なら None。st は State、today は date。"""
-    text, who = str(text or "").strip()[:TEXT_MAX], str(who or "").strip()
+def _key(v):
+    """相手を比べる鍵。印なら ID、そうでなければ表示名。"""
+    return who.uid_of(v) or norm(who.plain(v))
+
+
+def add(st, text, to, kind, today, due="", uid=""):
+    """台帳に足す。足した件、重複なら None。st は State、today は date。uid があれば相手を印で持つ。"""
+    text, to = str(text or "").strip()[:TEXT_MAX], str(to or "").strip()
+    to = who.link(uid, to) if to and uid else to
     if not text or kind not in KINDS:
         return None
-    if any(r["状態"] == OPEN and norm(r["相手"]) == norm(who) and _same(r["内容"], text) for r in st.data):
+    if any(r["状態"] == OPEN and _key(r["相手"]) == _key(to) and _same(r["内容"], text) for r in st.data):
         return None
     n = sum(1 for r in st.data if r["作られた日"] == today.isoformat()) + 1
-    rec = {"id": f"{today.isoformat()}-{n}", "内容": text, "相手": who, "種類": kind, "期限": due or "",
+    rec = {"id": f"{today.isoformat()}-{n}", "内容": text, "相手": to, "種類": kind, "期限": due or "",
            "状態": OPEN, "作られた日": today.isoformat()}
     while any(r["id"] == rec["id"] for r in st.data):
         n += 1
@@ -76,23 +83,30 @@ def _made(r):
         return None
 
 
-def pick(rows, author, n=RECALL_MAX):
+def pick(rows, author, n=RECALL_MAX, uid=None):
     """想起で渡す件。返信先と一致する件が先、次に期限が近い順（期限なしは後）。
+    返信先は、相手が印の件は ID で、印の無い古い件は表示名で比べる。
     同じ期限なら作られた順、期限なし同士は新しい順（古い宣言が枠を占め続けないように）。"""
-    key = norm(author or "")
+    key, uid = norm(author or ""), str(uid or "")
     opened = [r for r in rows if r.get("状態") == OPEN]
+
+    def mine(r):
+        to = r.get("相手", "")
+        if who.uid_of(to):
+            return bool(uid) and who.uid_of(to) == uid
+        return bool(key) and norm(to) == key
 
     def order(r):
         made = _made(r).toordinal() if _made(r) else 0
-        return (not (key and norm(r.get("相手", "")) == key), r.get("期限") or "9999-12-31",
+        return (not mine(r), r.get("期限") or "9999-12-31",
                 made if r.get("期限") else -made)
     opened.sort(key=order)
     return opened[:n]
 
 
-def recall(agent, author):
-    """返事を書く時の節の本文。未完了が無ければ None。"""
-    rows = pick(ledger(agent).data, author)
+def recall(agent, author, uid=None):
+    """返事を書く時の節の本文。未完了が無ければ None。相手の印は、会話用 LLM に渡す前に本体が外す。"""
+    rows = pick(ledger(agent).data, author, uid=uid)
     if not rows:
         return None
     out = []
@@ -140,7 +154,7 @@ async def update(agent, day, write_=False):
     skip = {d[0] for d in done}
     rest = [r for r in st.data if r["状態"] == OPEN and r["id"] not in skip]
     if rest:
-        state = day_text(agent, day) + "\n【自分の約束・宣言】\n" + "\n".join(f"{i}. {r['内容']}" for i, r in enumerate(rest))
+        state = day_text(agent, day) + "\n【自分の約束・宣言】\n" + "\n".join(f"{i}. {who.plain(r['内容'])}" for i, r in enumerate(rest))
         ans = await agent.jev.ask(state, {f"d{i}": noul(f"{i} 番の約束・宣言は、その日の会話か出来事で、実際に果たされた（済んだ）か。")
                                           for i in range(len(rest))})
         for i, r in enumerate(rest):

@@ -37,7 +37,7 @@ def written(a):
         "diary": v.exists("00 Diary/2026-11-12.md"),
         "lessons": v.note("01 Lessons/01 常識/初版の見分け方.md").meta["status"] == "inactive"
         or v.note("01 Lessons/01 常識/文庫本の初版は奥付.md").meta["status"] == "inactive",
-        "people": v.exists("05 人物/ミナ.md"),
+        "people": v.exists("05 人物/u-ミナ.md"),
         "digest": v.exists(digest.REL),
         "promises": promises.ledger(a).data[0]["状態"] != "未完了",
     }

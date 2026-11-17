@@ -31,8 +31,9 @@ def keep_words(words, *texts):
     return out[:6]
 
 
-def meta_for(kind, day: date, people, source=None, words=(), scene=""):
-    m = {"date": day, "教わった人": list(people), "status": "active", "種類": kind}
+def meta_for(kind, day: date, people, source=None, words=(), scene="", uids=()):
+    """people は教わった人（人名の印 `[[id|名前]]` か、ID の分からない人は名前）。uids は関係する人の ID。"""
+    m = {"date": day, "教わった人": list(people), "関係する人": [str(u) for u in uids], "status": "active", "種類": kind}
     if kind in SOURCED:
         m["出どころ"] = source or "会話"
     m["思い出す言葉"] = list(words)

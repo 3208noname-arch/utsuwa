@@ -18,7 +18,7 @@ import yaml
 from aiohttp import web
 
 from harness.__main__ import load_env
-from harness import __version__, context, digest, people, promises
+from harness import __version__, context, digest, people, promises, who
 from harness.agent import STARTS_PER_DAY, TOTAL_DAILY_MAX, Agent, day_key
 from harness.night import INACTIVE, part_on
 from harness.vault import Vault
@@ -123,6 +123,20 @@ def night_on(root, name):
     return part_on(Agent(Vault(root), None, None, None).config.get("night") or {}, name)
 
 
+def _plain(vault, v):
+    """画面に出す形。人名の印 [[id|名前]] を外して今の名前にする（文字列・リスト・dict の中まで）。"""
+    names = {u: d["name"] for u, d in who.page_names(vault).items() if d["name"]}
+    def go(x):
+        if isinstance(x, str):
+            return who.plain(x, names)
+        if isinstance(x, list):
+            return [go(y) for y in x]
+        if isinstance(x, dict):
+            return {k: go(y) for k, y in x.items()}
+        return x
+    return go(v)
+
+
 def read_promises(root):
     """約束の台帳。未完了を期限の近い順（期限なしは後）、済みと流れたは新しい順。"""
     rel = f"02 State/{promises.NAME}.json"
@@ -132,12 +146,14 @@ def read_promises(root):
     open_ = sorted((r for r in items if r.get("状態") == promises.OPEN),
                    key=lambda r: (not r.get("期限"), r.get("期限") or "", r.get("作られた日") or ""))
     rest = sorted((r for r in items if r.get("状態") != promises.OPEN), key=lambda r: r.get("作られた日") or "", reverse=True)
-    return {"exists": vault.exists(rel), "broken": broken, "on": night_on(root, "promises"), "open": open_, "closed": rest}
+    return {"exists": vault.exists(rel), "broken": broken, "on": night_on(root, "promises"),
+            "open": _plain(vault, open_), "closed": _plain(vault, rest)}
 
 
 def read_digest(root):
-    n = Vault(root).note(digest.REL)
-    sec = people.parse_page(n.body) if n else {}
+    vault = Vault(root)
+    n = vault.note(digest.REL)
+    sec = _plain(vault, people.parse_page(n.body)) if n else {}
     return {"exists": bool(n), "on": night_on(root, "digest"), "date": str(n.meta.get("date") or "") if n else "",
             "status": str(n.meta.get("status", "active")) if n else "",
             "sections": [{"head": h, "body": sec[h]} for h in sec if sec[h]]}
@@ -148,8 +164,8 @@ def read_persons(root):
     vault = Vault(root)
     items = []
     for e in people.index(vault):
-        n = vault.note(e.rel())
-        sec = people.parse_page(n.body) if n else {}
+        n = vault.note(people.page_rel(vault, e))
+        sec = _plain(vault, people.parse_page(n.body)) if n else {}
         items.append({"name": e.name, "id": e.uid, "forms": e.forms, "summary": e.summary, "updated": e.updated,
                       "page": bool(n), "status": str(n.meta.get("status", "active")) if n else "",
                       "sections": [{"head": h, "body": sec[h]} for h in sec if sec[h]]})

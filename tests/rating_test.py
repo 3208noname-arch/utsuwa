@@ -24,7 +24,7 @@ class FakeResponse:
 
 
 def inter():
-    return SimpleNamespace(response=FakeResponse(), user=SimpleNamespace(display_name="ポン酢"))
+    return SimpleNamespace(response=FakeResponse(), user=SimpleNamespace(display_name="ポン酢", id=900000000000000001))
 
 
 def press(view, name, i):
@@ -64,6 +64,7 @@ class RatingTest(unittest.TestCase):
     def test_pick_then_comment(self):
         r = self._rate(["キャラじゃない"])
         self.assertEqual((r["label"], r["comment"], r["rater"]), ("キャラじゃない", "ひと言", "ポン酢"))
+        self.assertEqual(r["rater_id"], "900000000000000001")      # 評価者は ID でも持つ
         self.assertNotIn("detail", r)
 
     def test_detail_step(self):

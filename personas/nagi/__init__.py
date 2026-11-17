@@ -570,7 +570,7 @@ class Nagi(Persona):
         who = a.get("to", ("なし",))[0]
         today = self.agent.now().date()
         promises.add(promises.ledger(self.agent), text, "" if who == "なし" else who, "約束" if p >= d else "宣言",
-                     today, promises.due_from(text, today))
+                     today, promises.due_from(text, today), self.agent.whois.uid_for(who) if who != "なし" else "")
 
     def on_sent(self, texts, a):
         self.keep_promise(texts, a)

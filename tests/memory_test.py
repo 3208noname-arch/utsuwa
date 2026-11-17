@@ -114,7 +114,8 @@ class RecordTest(unittest.TestCase):
         rel = run(a.recorder.from_talk(talk_item("レジ袋は3円だよ"), ("常識", {})))
         n = a.vault.note(rel)
         self.assertEqual(rel, "01 Lessons/01 常識/レジ袋は1枚3円.md")
-        self.assertEqual(n.meta["教わった人"], ["ミナ"])
+        self.assertEqual(n.meta["教わった人"], ["[[u1|ミナ]]"])     # 人は印で持つ
+        self.assertEqual(n.meta["関係する人"], ["u1"])
         self.assertEqual(n.meta["出どころ"], "会話")
         self.assertEqual(n.meta["思い出す言葉"], ["レジ袋"])     # 本文にも発言にも無い語は落とす
         self.assertEqual(str(n.meta["date"]), "2026-11-04")

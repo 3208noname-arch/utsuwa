@@ -57,6 +57,23 @@ python -m harness "/path/to/Vault/12 AIたち/あかり" --env .env
 python -m harness.ui "/path/to/Vault/12 AIたち/あかり" --env .env   # 様子を見る Web UI（.env の UI_HOST、UI_PORT で待ち受ける）
 ```
 
+## 人の名前
+
+日記・記憶・近況・人物ページの人名は、Discord のユーザー ID に紐づく印 `[[<id>|表示名]]` で書く（`harness/who.py`）。
+表示名が変わっても、同じ人の情報が分かれない。
+
+- 印はコードが付ける。記録用 LLM に渡す会話の発言者は `author_id` から引き、最初から印の形にする。書いた後、知らない ID の印は外す
+- 人物ページは `05 人物/<id>.md`。フロントマターに今の表示名・ユーザー名・過去の名前（`aliases`）を持つ
+- 会話用 LLM と Jev には、印を外して今の名前で渡す
+- 記憶は `関係する人`（ID）で人に結びつけ、返信先の ID で引く。`思い出す言葉` に人名は入れない
+
+前の作りの Vault は、移行で印に直す（既定は dry-run。曖昧な所は置き換えずに一覧に出す）。
+
+```bash
+python -m harness.migrate_names "/path/to/Vault/12 AIたち/あかり" --word ゆず胡椒 --diff   # --word は普通の語でもある名前
+python -m harness.migrate_names "/path/to/Vault/12 AIたち/あかり" --word ゆず胡椒 --write
+```
+
 ## 人格の部品
 
 `personas/` の下に、人格ごとの部品を置く（`config.yaml` の `persona` で選ぶ）。
