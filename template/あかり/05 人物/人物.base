@@ -1,0 +1,15 @@
+filters:
+  and:
+    - file.inFolder("12 AIたち/あかり/05 人物")
+    - file.ext == "md"
+    - 種類 == "人物"
+properties:
+  id:
+    displayName: ID
+views:
+  - type: table
+    name: 人物
+    order: [表示名, id, ユーザー名, 呼び名, 一行要約, 最終更新, aliases, status]
+    sort:
+      - property: 最終更新
+        direction: DESC

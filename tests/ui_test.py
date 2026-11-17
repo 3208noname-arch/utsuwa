@@ -102,16 +102,16 @@ class UiTest(unittest.TestCase):
         v = Vault(root)
         v.write_text("02 State/近況.md", "---\ndate: 2026-11-12\nstatus: active\n---\n"
                                          "# 体と生活\n寝不足\n\n# 進行中のこと\n\n# 最近の流れ\n落ち着いた\n")
-        v.write_text("05 人物/INDEX.md", "| 表示名 | ID | 呼び名 | 一行要約 | 最終更新 |\n|---|---|---|---|---|\n"
-                                        "| トオル | 42 | トオくん、トオル | 常連 | 2026-11-12 |\n| ミサ |  |  | 初対面 | 2026-11-11 |\n")
-        v.write_text("05 人物/トオル.md", "---\nstatus: active\n---\n# 関係\n古い友人\n\n# 最近の出来事\n- 猫の話\n")
+        v.write_text("05 人物/42.md", "---\n種類: 人物\nstatus: active\nid: '42'\n表示名: トオル\n呼び名: [トオくん, トオル]\n"
+                                     "一行要約: 常連\n最終更新: 2026-11-12\n---\n# 関係\n古い友人\n\n# 最近の出来事\n- 猫の話\n")
+        v.write_text("05 人物/ミサ.md", "---\n種類: 人物\nstatus: active\n一行要約: 初対面\n---\n")
         dg, ps = fetch(root, "/api/digest", "/api/persons")
         self.assertEqual(dg["date"], "2026-11-12")
         self.assertEqual([x["head"] for x in dg["sections"]], ["体と生活", "最近の流れ"])
         toru, misa = ps["items"]
         self.assertEqual((toru["id"], toru["forms"], toru["page"]), ("42", ["トオくん", "トオル"], True))
         self.assertEqual(toru["sections"][1], {"head": "最近の出来事", "body": "- 猫の話"})
-        self.assertEqual((misa["page"], misa["sections"]), (False, []))
+        self.assertEqual((misa["summary"], misa["sections"]), ("初対面", []))
 
     def test_night_reads_the_day_newest_run_first_and_refuses_paths(self):
         root = copy_template()

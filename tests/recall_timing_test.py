@@ -7,7 +7,7 @@ from harness import people
 from harness.outbox import Intent
 from tests.flow_test import LIVE, cands, make, pov_ok, say
 from tests.fakes import FakeLLM
-from tests.people_test import INDEX, PAGE, T
+from tests.people_test import PAGE, T
 
 
 def recall_rule(s, n, q):
@@ -47,7 +47,6 @@ class ReactionRecallTest(unittest.TestCase):
     def compose(self, source, kind):
         a, _, _ = make(recall_rule, FakeLLM([json.dumps({"candidates": [{"reaction": "😀"}]})
                                              if kind == "reaction" else cands("うん")]))
-        a.vault.write_text("05 人物/INDEX.md", INDEX)
         a.vault.write_text("05 人物/ミナ.md", PAGE)
         target = {"id": "9", "author": "ミナ", "author_id": "u-ミナ", "text": "最近コーヒー淹れてる？", "channel": "c"}
         a.conv("c").add({**target, "at": T.isoformat(timespec="seconds"), "bot": False, "me": False})

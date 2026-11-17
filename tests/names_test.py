@@ -183,8 +183,8 @@ class NightTest(unittest.TestCase):
         llm = FakeLLM([json.dumps({"体と生活": "眠い", "進行中のこと": "", "関係の変化": f"[[{A}|ミナ]]と仲直り。[[5|x]]",
                                    "最近の流れ": ""})])
         a = agent(llm)
-        a.vault.write_text(people.INDEX, join({"date": DAY, "status": "active", "種類": "索引"},
-                                              people.render_index([people.Entry("ミナ", [], "友人", DAY.isoformat(), A)])))
+        a.vault.write_text(f"05 人物/{A}.md", join({"date": DAY, "種類": "人物", "status": "active", "id": A, "表示名": "ミナ",
+                                                    "一行要約": "友人", "最終更新": DAY.isoformat()}, "# 関係\n友人"))
         p = asyncio.run(digest.propose(a, DAY))
         self.assertIn(f"[[{A}|ミナ]]（友人）", llm.calls[0][1]["content"])
         self.assertIn(f"[[{A}|ミナ]]と仲直り。x", p["body"])
@@ -202,7 +202,8 @@ class NightTest(unittest.TestCase):
         sec = people.parse_page(n.body)
         self.assertEqual(sec["関係"], f"[[{A}|ミナ]]とは同じ学部。誰かの話もする。")
         self.assertEqual(sec["呼び名・呼び方"], "- ミナ")                      # 呼び名は印を外した語
-        self.assertIn(f"| [[{A}]] |", a.vault.text(people.INDEX))          # INDEX の ID 列はページへのリンク
+        self.assertEqual((n.meta["一行要約"], n.meta["呼び名"]), ("ミナは友人", ["ミナ"]))   # 一覧の値は印を外して
+        self.assertFalse(a.vault.exists("05 人物/INDEX.md"))                 # INDEX は書かない
         self.assertEqual(people.index(a.vault)[0].uid, A)
 
 

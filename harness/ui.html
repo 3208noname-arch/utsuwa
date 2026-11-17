@@ -668,7 +668,7 @@ const secRows = secs => secs.map(x => `<li class="line"><b>${esc(x.head)}</b><p 
 
 async function loadPersons() {
   const d = await json("api/persons");
-  $("#personsNote").textContent = (d.exists ? `${d.items.length}人。` : "05 人物/INDEX.md はまだ無い。") + offNote(d.on, "people");
+  $("#personsNote").textContent = (d.exists ? `${d.items.length}人。` : "05 人物 はまだ無い。") + offNote(d.on, "people");
   $("#persons").innerHTML = d.items.map(p => `<details class="person"><summary><span><b>${esc(p.name)}</b>
     <span class="mute">${esc(p.forms.join("、"))}</span></span><span class="mute">${esc(p.summary)}</span><span class="mute">${esc(p.updated)}</span></summary>
     <p class="mute">ID: ${esc(p.id || "（まだ無い）")}${p.status && p.status !== "active" ? "・" + esc(p.status) : ""}</p>

@@ -85,20 +85,32 @@ class MigrateTest(unittest.TestCase):
 
     def test_legacy_page_moves_to_id_and_promise_partner_is_marked(self):
         v = setup()
-        v.write_text(people.INDEX, join({"date": "2026-11-05", "status": "active", "種類": "索引"},
+        v.write_text(migrate_names.LEGACY_INDEX, join({"date": "2026-11-05", "status": "active", "種類": "索引"},
                                         "| 表示名 | ID | 呼び名 | 一行要約 | 最終更新 |\n|---|---|---|---|---|\n"
-                                        f"| 旧ゆず | {A} |  | 友人 | 2026-11-05 |"))
+                                        f"| 旧ゆず | {A} | ゆずさん | 友人 | 2026-11-05 |\n"
+                                        f"| トオル | 900000000000000004 |  | 先輩 | 2026-11-04 |\n"
+                                        f"| 幽霊 |  |  | ページの無い行 | 2026-11-01 |"))
+        v.write_text("05 人物/900000000000000004.md", join({"date": "2026-11-04", "種類": "人物", "status": "active",
+                                                          "id": "900000000000000004", "表示名": "トオル"}, "# 関係\n先輩。"))
         v.write_text("05 人物/旧ゆず.md", join({"date": "2026-11-05", "種類": "人物", "status": "active"},
                                             "# 関係\nゆず胡椒とは同じ学部。"))
         v.write_text("02 State/約束.json", json.dumps([{"id": "1", "内容": "奢る", "相手": "トオル", "種類": "約束",
                                                        "期限": "", "状態": "未完了", "作られた日": "2026-11-05"}],
                                                      ensure_ascii=False))
-        run(v, write=True)
+        index_before = v.text(migrate_names.LEGACY_INDEX)
+        plan, _ = run(v, write=True)
         self.assertFalse(v.exists("05 人物/旧ゆず.md"))
         n = v.note(f"05 人物/{A}.md")
         self.assertEqual((n.meta["id"], n.meta["表示名"], n.meta["aliases"]), (A, "ゆず胡椒", ["旧ゆず"]))
+        self.assertEqual((n.meta["呼び名"], n.meta["一行要約"], str(n.meta["最終更新"])), (["ゆずさん"], "友人", "2026-11-05"))
+        t = v.note("05 人物/900000000000000004.md").meta                      # ID の名前のページは、無い項目だけ足す
+        self.assertEqual((t["表示名"], t["一行要約"], str(t["最終更新"])), ("トオル", "先輩", "2026-11-04"))
+        self.assertEqual(v.text(migrate_names.LEGACY_INDEX), index_before)    # INDEX は書き換えない
+        self.assertIn("ページが無い", {r["name"]: r["why"] for r in plan.ambiguous}["幽霊"])
         self.assertIn(f"[[{A}|ゆず胡椒]]とは同じ学部", n.body)
-        self.assertEqual([(e.name, e.uid) for e in people.index(v)], [("ゆず胡椒", A)])
+        self.assertEqual([(e.name, e.uid) for e in people.index(v)], [("ゆず胡椒", A), ("トオル", "900000000000000004")])
+        again, _ = run(v)
+        self.assertEqual((again.meta, again.moves), ([], []))                  # 2回目は何も変えない
         self.assertEqual(json.loads(v.text("02 State/約束.json"))[0]["相手"], "[[900000000000000004|トオル]]")
 
 

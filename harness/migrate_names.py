@@ -3,7 +3,7 @@
     python -m harness.migrate_names "<Vault>/12 AIたち/<名前>" [--word ゆず胡椒] [--person "00 Diary/2026-11-11.md:3:ゆず胡椒"] [--diff] [--write]
 
 - 名前と ID の対応は `03 Logs/chat/*.jsonl` の author / author_id から作る（自分と Bot は除く）。
-  人物ページの INDEX に ID のある行の表示名も足す。同じ名前に ID が2つ以上あれば、その名前は置き換えない（曖昧）
+  人物ページ（フロントマターの id）と、前の作りの `05 人物/INDEX.md` で ID のある行の表示名も足す。同じ名前に ID が2つ以上あれば、その名前は置き換えない（曖昧）
 - 対象は 00 Diary、01 Lessons、02 State（md と 約束.json の「相手」）、05 人物
 - 本文: 知っている名前を印にする。ただし「普通の語でもある名前」（`--word` で渡した語と、ひらがな3字以下の名前）は、
   そのノートがその人に結びつき（教わった人にいる、日記ならその日のログで発言しているか返事を受けている）、
@@ -12,7 +12,9 @@
   （行は一覧に出る行番号。本文の何行目か。同じ名前に ID が2つ以上ある所は、これでも置き換えない）
 - フロントマター: 教わった人を印に、関係する人（ID）を足す、思い出す言葉から人名を落とす
   （普通の語でもある名前は、ノートがその人に結びつく時だけ落とし、それ以外は一覧に出す）
-- 05 人物/<表示名>.md（INDEX に ID のある行）は 05 人物/<id>.md に移し、フロントマターに id・表示名・ユーザー名・aliases を足す
+- 前の作りの `05 人物/INDEX.md` の行から、ページのフロントマターに 呼び名・一行要約・最終更新 を足す（ページに無い項目だけ）。
+  ID のある行の `<表示名>.md` は `<id>.md` に移し、id・表示名・ユーザー名・aliases も足す。INDEX.md は書き換えない
+  （ハーネスはもう読まない。中身がページに移ったのを確かめたら手で消し、一覧は `人物.base` で見る）
 """
 import argparse
 import difflib
@@ -27,6 +29,29 @@ from harness import people, who
 from harness.vault import Vault, dump_meta, join, split
 
 FOLDERS = ("00 Diary", "01 Lessons", "02 State", "05 人物")
+LEGACY_INDEX = "05 人物/INDEX.md"       # 前の作りの人物の表。移行でだけ読む
+LEGACY_COLS = ("表示名", "ID", "呼び名", "一行要約", "最終更新")
+OLDER_COLS = ("表示名", "呼び名", "一行要約", "最終更新")    # ID 列を足す前の表
+
+
+def legacy_index(v):
+    """前の作りの INDEX.md の表を Entry の並びに。無ければ空。列は見出し行で決める。"""
+    n = v.note(LEGACY_INDEX)
+    out, cols = [], None
+    for line in (n.body if n else "").split("\n"):
+        if not line.strip().startswith("|"):
+            continue
+        c = [x.strip() for x in line.strip().strip("|").split("|")]
+        if c[0] == LEGACY_COLS[0]:
+            cols = c
+            continue
+        use = cols or (LEGACY_COLS if len(c) >= len(LEGACY_COLS) else OLDER_COLS)
+        if len(c) < len(use) or set(c[0]) <= set("-: ") or not c[0]:
+            continue
+        d = dict(zip(use, c))
+        out.append(people.Entry(d["表示名"], [x.strip() for x in re.split(r"[、,]", d.get("呼び名", "")) if x.strip()],
+                                d.get("一行要約", ""), d.get("最終更新", ""), people._uid(d.get("ID"))))
+    return out
 PERSON_AFTER = re.compile(r"^(?:から|に|が|と|は|も|へ|さん|くん|君|ちゃん|氏|の(?:発言|話|こと|奴|やつ)|[、。！？!?」』）)\s]|$)")
 FOOD = re.compile(r"鍋|かけ|味|醤油|調味料|餃子|しゃぶ|酸っぱ|ドレッシング|瓶|ボトル|冷蔵庫|料理|食べ|食う|飯|牡蠣|柿|大根")
 SENT = re.compile(r"[^。！？!?\n]*[。！？!?\n]?")
@@ -55,7 +80,7 @@ def directory(root):
                     user[uid] = m["username"]
                 days[day].add(uid)
     v = Vault(root)
-    for e in people.index(v):
+    for e in legacy_index(v) + people.index(v):
         if e.uid:
             by_name[e.name].add(e.uid)
             latest.setdefault(e.uid, e.name)
@@ -215,17 +240,33 @@ def _rewrite(raw, note, changes, body):
 
 
 def plan_pages(v, latest, user, plan):
-    """前の作りの人物ページ（<表示名>.md、INDEX に ID あり）を <id>.md に移す案。[(古い rel, 新しい rel, 新しい全文)]。"""
+    """前の作りの INDEX の行から、人物ページの書き換え案。[(古い rel, 新しい rel, 新しい全文)]。
+    ID のある行の `<表示名>.md` は `<id>.md` に移す。呼び名・一行要約・最終更新は、ページに無い時だけ INDEX から足す。"""
     out = []
-    for e in people.index(v):
-        if not e.uid or v.exists(e.rel()) or not v.exists(e.legacy()):
+    for e in legacy_index(v):
+        if e.uid and not v.exists(e.rel()) and v.exists(e.legacy()):
+            src = e.legacy()
+        elif v.exists(e.rel()):
+            src = e.rel()
+        else:
+            plan.amb(LEGACY_INDEX, 0, e.name, "INDEX にあってページが無い（移さない）", e.summary)
             continue
-        n = v.note(e.legacy())
-        name = latest.get(e.uid, e.name)
-        aliases = [e.name] if e.name != name else []
-        meta = {**n.meta, "id": e.uid, "表示名": name, "ユーザー名": user.get(e.uid, ""), "aliases": aliases}
-        out.append((e.legacy(), e.rel(), join(meta, n.body)))
-        plan.moves.append({"from": e.legacy(), "to": e.rel(), "表示名": name, "aliases": aliases})
+        n = v.note(src)
+        meta = dict(n.meta or {})
+        if e.uid and src != e.rel():
+            name = latest.get(e.uid, e.name)
+            aliases = [e.name] if e.name != name else []
+            meta.update({"id": e.uid, "表示名": name, "ユーザー名": user.get(e.uid, ""), "aliases": aliases})
+            plan.moves.append({"from": src, "to": e.rel(), "表示名": name, "aliases": aliases})
+        add = {"表示名": e.name, "呼び名": e.forms, "一行要約": e.summary, "最終更新": e.updated}
+        for k, x in add.items():
+            if x and not meta.get(k):
+                meta[k] = x
+                if src == e.rel():
+                    plan.meta.append({"file": src, "key": k, "before": None, "after": x})
+        meta.setdefault("種類", people.KIND)
+        if meta != (n.meta or {}) or src != e.rel():
+            out.append((src, e.rel(), join(meta, n.body)))
     return out
 
 
@@ -248,15 +289,19 @@ def run(root, words=(), write=False, diff=False, out=sys.stdout, persons=()):
         if not v.exists(folder):
             continue
         for rel, _ in v.notes(folder):
-            if rel == people.INDEX:
+            if rel == LEGACY_INDEX:
                 continue
             if rel in move_to:
                 new_rel, text = move_to[rel]
                 tmp_note = split(text)
                 meta = tmp_note.meta
-                body, used = mark_body(new_rel, tmp_note.body, by_name, {meta["id"]}, words, plan)
-                plan.writes[new_rel] = (None, join(meta, body))
-                plan.writes[rel] = (open(v.path(rel), encoding="utf-8").read(), None)     # 消す
+                tied = {str(meta["id"])} if meta.get("id") else set()
+                body, used = mark_body(new_rel, tmp_note.body, by_name, tied, words, plan)
+                if new_rel == rel:
+                    plan.writes[rel] = (open(v.path(rel), encoding="utf-8").read(), join(meta, body))
+                else:
+                    plan.writes[new_rel] = (None, join(meta, body))
+                    plan.writes[rel] = (open(v.path(rel), encoding="utf-8").read(), None)     # 消す
                 continue
             new = migrate_note(v, rel, by_name, latest, days, words, plan, all_names)
             if new is not None:
@@ -280,15 +325,6 @@ def run(root, words=(), write=False, diff=False, out=sys.stdout, persons=()):
                 plan.amb(prel, 0, to, f"約束の相手: 同じ名前の ID が{len(ids)}つ", r.get("内容", ""))
         if changed:
             plan.writes[prel] = (before, json.dumps(rows, ensure_ascii=False, indent=1))
-    if moved:
-        ents = []
-        for e in people.index(v):
-            e.name = latest.get(e.uid, e.name) if e.uid else e.name
-            ents.append(e)
-        n = v.note(people.INDEX)
-        head = n.body.split("|", 1)[0].rstrip() + "\n\n" if "|" in n.body else ""
-        plan.writes[people.INDEX] = (open(v.path(people.INDEX), encoding="utf-8").read(),
-                                     join(n.meta, head + people.render_index(ents)))
     report(plan, words | {n for n in by_name if wordlike(n, words)}, out, diff)
     if write:
         for rel, (_, new) in plan.writes.items():

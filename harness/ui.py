@@ -160,7 +160,7 @@ def read_digest(root):
 
 
 def read_persons(root):
-    """人物ページの INDEX と、各ページの節。"""
+    """人物ページ（各ページのフロントマター）と、各ページの節。"""
     vault = Vault(root)
     items = []
     for e in people.index(vault):
@@ -169,7 +169,7 @@ def read_persons(root):
         items.append({"name": e.name, "id": e.uid, "forms": e.forms, "summary": e.summary, "updated": e.updated,
                       "page": bool(n), "status": str(n.meta.get("status", "active")) if n else "",
                       "sections": [{"head": h, "body": sec[h]} for h in sec if sec[h]]})
-    return {"exists": vault.exists(people.INDEX), "on": night_on(root, "people"), "items": items}
+    return {"exists": vault.exists(people.FOLDER), "on": night_on(root, "people"), "items": items}
 
 
 def read_night(root, day):

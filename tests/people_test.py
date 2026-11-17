@@ -1,4 +1,4 @@
-"""人物ページ：INDEX の読み取り、返信先への固定枠、夜の更新（write が false の間は書かない）。"""
+"""人物ページ：フロントマターの一覧、返信先への固定枠、夜の更新（write が false の間は書かない）。"""
 import asyncio
 import json
 import unittest
@@ -13,22 +13,23 @@ from tests.fakes import FakeJev, FakeLLM, FakeSender, copy_template, msg
 T = datetime(2026, 11, 12, 20, 0)
 DAY = date(2026, 11, 12)
 
-INDEX = """---
+OLD_INDEX = """---
 date: 2026-11-12
 status: active
 種類: 索引
 ---
-説明の文。
-
 | 表示名 | 呼び名 | 一行要約 | 最終更新 |
 |---|---|---|---|
 | ミナ | みなみな、ミナさん | 古本屋の話をよくする友人 | 2026-11-11 |
-| トオル |  | 無口な先輩 | 2026-11-10 |
 """
 PAGE = """---
 date: 2026-11-10
 種類: 人物
 status: active
+表示名: ミナ
+呼び名: [みなみな, ミナさん]
+一行要約: 古本屋の話をよくする友人
+最終更新: 2026-11-11
 related: []
 ---
 # 関係
@@ -54,7 +55,8 @@ def agent(llm=None):
 
 
 def with_minna(a):
-    a.vault.write_text("05 人物/INDEX.md", INDEX)
+    """ID の無いページ（手で書いた `<表示名>.md`）。前の作りの INDEX.md も残っている（もう読まない）。"""
+    a.vault.write_text("05 人物/INDEX.md", OLD_INDEX)
     a.vault.write_text("05 人物/ミナ.md", PAGE)
     return a
 
@@ -66,16 +68,19 @@ def sections(a, author):
 
 
 class IndexTest(unittest.TestCase):
-    def test_parse_reads_rows_and_skips_header_and_rule(self):
-        got = people.parse_index(INDEX)
-        self.assertEqual([e.name for e in got], ["ミナ", "トオル"])
-        self.assertEqual(got[0].forms, ["みなみな", "ミナさん"])
-        self.assertEqual(got[0].summary, "古本屋の話をよくする友人")
-        self.assertEqual(got[0].updated, "2026-11-11")
-        self.assertEqual(got[1].forms, [])
+    def test_index_reads_frontmatter_and_skips_other_kinds(self):
+        a = with_minna(agent())
+        got = people.index(a.vault)
+        self.assertEqual([(e.name, e.forms, e.summary, e.updated, e.uid) for e in got],
+                         [("ミナ", ["みなみな", "ミナさん"], "古本屋の話をよくする友人", "2026-11-11", "")])   # INDEX.md（索引）は読まない
 
-    def test_template_index_is_empty(self):
-        self.assertEqual(people.index(Vault(copy_template())), [])
+    def test_template_has_no_pages_and_a_base(self):
+        v = Vault(copy_template())
+        self.assertEqual(people.index(v), [])
+        self.assertFalse(v.exists("05 人物/INDEX.md"))
+        base = v.text("05 人物/人物.base")
+        for col in ("表示名", "id", "ユーザー名", "呼び名", "一行要約", "最終更新"):
+            self.assertIn(col, base)
 
     def test_find_by_display_or_alias(self):
         a = with_minna(agent())
@@ -83,10 +88,10 @@ class IndexTest(unittest.TestCase):
         self.assertEqual(people.find(a.vault, "みなみな").name, "ミナ")
         self.assertIsNone(people.find(a.vault, "ケイ"))
 
-    def test_render_roundtrip(self):
-        ents = people.parse_index(INDEX)
-        self.assertEqual([(e.name, e.forms, e.summary) for e in people.parse_index(people.render_index(ents))],
-                         [(e.name, e.forms, e.summary) for e in ents])
+    def test_page_without_frontmatter_uses_file_name(self):
+        a = agent()
+        a.vault.write_text("05 人物/ケイ.md", "# 関係\n先輩。")
+        self.assertEqual(people.find(a.vault, "ケイ").at, "05 人物/ケイ.md")
 
 
 class RecallTest(unittest.TestCase):
@@ -106,7 +111,7 @@ class RecallTest(unittest.TestCase):
     def test_no_section_without_page(self):
         a = with_minna(agent())
         self.assertNotIn(people.SECTION, sections(a, "ケイ"))
-        self.assertNotIn(people.SECTION, sections(a, "トオル"))      # INDEX にあってもページが無ければ付けない
+        self.assertNotIn(people.SECTION, sections(a, "トオル"))
 
     def test_no_section_without_target_or_index(self):
         a = with_minna(agent())
@@ -150,13 +155,16 @@ class NightTest(unittest.TestCase):
         self.assertFalse(self.a.vault.exists("05 人物/u-ミナ.md"))
         self.assertEqual(people.find(self.a.vault, "ミナ").updated, "2026-11-11")
 
-    def test_write_updates_page_and_index(self):
+    def test_write_updates_page_and_frontmatter(self):
+        index_before = self.a.vault.text("05 人物/INDEX.md")
         done = asyncio.run(people.update(self.a, DAY, write_=True))
         self.assertEqual(done, [("05 人物/u-ミナ.md", True)])         # ページ名は ID
         self.assertFalse(self.a.vault.exists("05 人物/ミナ.md"))        # 前の作りのページは移した
         n = self.a.vault.note("05 人物/u-ミナ.md")
         self.assertEqual(n.meta["種類"], "人物")
         self.assertEqual((n.meta["id"], n.meta["表示名"], n.meta["aliases"]), ("u-ミナ", "ミナ", []))
+        self.assertEqual((n.meta["一行要約"], str(n.meta["最終更新"])), ("古本を貸し借りする友人", "2026-11-12"))
+        self.assertEqual(self.a.vault.text("05 人物/INDEX.md"), index_before)   # INDEX.md は書かない
         self.assertEqual(str(n.meta["date"]), "2026-11-10")          # 作った日は保つ
         sec = people.parse_page(n.body)
         self.assertEqual(sec["約束・宣言"], "- 今度ラーメンを奢る")
@@ -164,7 +172,6 @@ class NightTest(unittest.TestCase):
         self.assertEqual((e.summary, e.updated), ("古本を貸し借りする友人", "2026-11-12"))
         self.assertIn("みなみな", e.forms)
         self.assertNotIn("でっち上げ", e.forms)                       # 材料に無い呼び名は入れない
-        self.assertEqual(people.find(self.a.vault, "トオル").summary, "無口な先輩")   # 他の行は残る
 
     def test_material_excludes_own_lines_and_one_liners(self):
         asyncio.run(people.update(self.a, DAY, write_=False))
@@ -191,7 +198,7 @@ class NightTest(unittest.TestCase):
         self.assertEqual(out["people"], [("05 人物/u-ミナ.md", False)])
         self.assertEqual(self.a.vault.text("05 人物/ミナ.md"), before)
 
-    def test_new_person_creates_page_and_index_row(self):
+    def test_new_person_creates_page(self):
         a = agent(FakeLLM(lambda m: json.dumps(ANSWER)))
         with_chat(a)
         asyncio.run(people.update(a, DAY, write_=True))
@@ -200,23 +207,9 @@ class NightTest(unittest.TestCase):
         self.assertIn(people.SECTION, sections(a, "ミナ"))             # 書いた翌日から想起される
 
 
-INDEX_ID = """---
-date: 2026-11-12
-status: active
-種類: 索引
----
-説明の文。
-
-| 表示名 | ID | 呼び名 | 一行要約 | 最終更新 |
-|---|---|---|---|---|
-| ミナ | 1001 | みなみな | 古本屋の話をよくする友人 | 2026-11-11 |
-| トオル |  |  | 無口な先輩 | 2026-11-10 |
-"""
-
-
 def with_ids(a):
-    a.vault.write_text("05 人物/INDEX.md", INDEX_ID)
-    a.vault.write_text("05 人物/ミナ.md", PAGE)
+    a.vault.write_text("05 人物/1001.md", PAGE.replace("表示名: ミナ", "id: '1001'\n表示名: ミナ\nユーザー名: mina\naliases: []")
+                       .replace("呼び名: [みなみな, ミナさん]", "呼び名: [みなみな]"))
     return a
 
 
@@ -227,23 +220,16 @@ def says(a, author, uid, n=3):
 
 
 def pages(a):
-    return sorted(x for x in a.vault.names("05 人物", ".md") if not x.endswith("INDEX.md"))
+    return sorted(a.vault.names("05 人物", ".md"))
 
 
 class AuthorIdTest(unittest.TestCase):
-    """INDEX は author_id で引く。表示名が変わっても同じ人、同じ表示名でも ID が違えば別人。"""
+    """author_id で `<id>.md` を引く。表示名が変わっても同じ人、同じ表示名でも ID が違えば別人。"""
 
-    def test_parse_and_render_keep_id(self):
-        got = people.parse_index(INDEX_ID)
-        self.assertEqual([(e.name, e.uid, e.forms) for e in got], [("ミナ", "1001", ["みなみな"]), ("トオル", "", [])])
-        again = people.parse_index(people.render_index(got))
-        self.assertEqual([(e.name, e.uid, e.forms, e.summary, e.updated) for e in again],
-                         [(e.name, e.uid, e.forms, e.summary, e.updated) for e in got])
-
-    def test_old_index_without_id_column_is_read(self):
-        got = people.parse_index(INDEX)
-        self.assertEqual([(e.name, e.uid, e.summary) for e in got],
-                         [("ミナ", "", "古本屋の話をよくする友人"), ("トオル", "", "無口な先輩")])
+    def test_index_reads_id(self):
+        a = with_ids(agent())
+        self.assertEqual([(e.name, e.uid, e.forms, e.at) for e in people.index(a.vault)],
+                         [("ミナ", "1001", ["みなみな"], "05 人物/1001.md")])
 
     def test_found_by_id_after_display_name_changed(self):
         a = with_ids(agent())
@@ -264,9 +250,8 @@ class AuthorIdTest(unittest.TestCase):
         self.assertEqual(people.find(a.vault, "ミナ", "1001").name, "ミナ")
         says(a, "ミナ", "1001")
         asyncio.run(people.update(a, DAY, write_=True))
-        self.assertEqual({e.name: e.uid for e in people.index(a.vault)}, {"ミナ": "1001", "トオル": ""})
-        self.assertIn("| 表示名 | ID |", a.vault.text("05 人物/INDEX.md"))
-        self.assertIn("説明の文。", a.vault.text("05 人物/INDEX.md"))
+        self.assertEqual({e.name: e.uid for e in people.index(a.vault)}, {"ミナ": "1001"})
+        self.assertEqual(pages(a), ["05 人物/1001.md", "05 人物/INDEX.md"])        # <表示名>.md は <id>.md に移した
 
     def test_night_update_after_rename_keeps_one_page(self):
         llm = FakeLLM(lambda m: json.dumps(ANSWER))
@@ -284,30 +269,25 @@ class AuthorIdTest(unittest.TestCase):
 
     def test_same_display_name_two_ids_get_two_pages(self):
         a = with_ids(agent(FakeLLM(lambda m: json.dumps(ANSWER))))
-        before = a.vault.text("05 人物/ミナ.md")
+        before = a.vault.text("05 人物/1001.md")
         says(a, "ミナ", "2002")
         done = asyncio.run(people.update(a, DAY, write_=True))
         self.assertEqual(done, [("05 人物/2002.md", True)])
-        self.assertEqual(a.vault.text("05 人物/ミナ.md"), before)        # 別人のページを上書きしない
+        self.assertEqual(a.vault.text("05 人物/1001.md"), before)        # 別人のページを上書きしない
         self.assertEqual({e.uid: e.name for e in people.index(a.vault) if e.uid}, {"1001": "ミナ", "2002": "ミナ"})
 
-    def test_pipe_in_display_name_does_not_break_table(self):
+    def test_pipe_in_display_name_is_kept(self):
         a = agent(FakeLLM(lambda m: json.dumps(ANSWER)))
         says(a, "ミナ|眠い", "3003")
         asyncio.run(people.update(a, DAY, write_=True))
         asyncio.run(people.update(a, DAY, write_=True))                  # 2晩目も同じ行・同じページ
         ents = people.index(a.vault)
         self.assertEqual([(e.name, e.uid, e.summary, e.updated) for e in ents],
-                         [("ミナ｜眠い", "3003", "古本を貸し借りする友人", "2026-11-12")])
+                         [("ミナ|眠い", "3003", "古本を貸し借りする友人", "2026-11-12")])
         self.assertEqual(pages(a), ["05 人物/3003.md"])
-        rows = [x for x in a.vault.text("05 人物/INDEX.md").split("\n") if x.startswith("| ミナ")]
-        self.assertEqual([x.count("|") for x in rows], [6])
         target = {"id": "9", "author": "ミナ|眠い", "author_id": "3003", "text": "やあ", "channel": "c"}
         s, _ = a.sections(Intent("reply", "c", "normal", T, target=target), T)
         self.assertIn(people.SECTION, s)
-
-    def test_template_index_has_id_column(self):
-        self.assertIn("| 表示名 | ID | 呼び名 | 一行要約 | 最終更新 |", Vault(copy_template()).text("05 人物/INDEX.md"))
 
 
 if __name__ == "__main__":
